@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTO Tracker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <div class="header-content">
+                <h1 class="logo">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    PTO Tracker
+                </h1>
+                <div class="header-actions">
+                    <button class="btn btn-icon" id="btn-settings" title="Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-tab="dashboard">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                </svg>
+                Dashboard
+            </button>
+            <button class="nav-tab" data-tab="calendar">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                Calendar
+            </button>
+            <button class="nav-tab" data-tab="vacations">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2.75 2.75 0 0 1-5.46 0"></path>
+                </svg>
+                Vacations
+            </button>
+            <button class="nav-tab" data-tab="forecast">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+                Forecast
+            </button>
+        </nav>
+
+        <main class="main-content">
+            <div class="tab-content active" id="tab-dashboard">
+                <div class="dashboard-grid">
+                    <div class="card balance-card">
+                        <div class="card-header">
+                            <h2>Current Balance</h2>
+                            <span class="date-badge" id="today-date"></span>
+                        </div>
+                        <div class="balance-display">
+                            <div class="balance-amount" id="current-balance">0.0</div>
+                            <div class="balance-label">days available</div>
+                        </div>
+                        <div class="balance-breakdown">
+                            <div class="breakdown-item">
+                                <span class="breakdown-label">Accrued</span>
+                                <span class="breakdown-value positive" id="accrued-balance">0.0</span>
+                            </div>
+                            <div class="breakdown-item">
+                                <span class="breakdown-label">Used</span>
+                                <span class="breakdown-value negative" id="used-balance">0.0</span>
+                            </div>
+                            <div class="breakdown-item">
+                                <span class="breakdown-label">Limit</span>
+                                <span class="breakdown-value" id="limit-balance">40.0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card stats-card">
+                        <div class="card-header">
+                            <h2>Quick Stats</h2>
+                        </div>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value" id="stat-accrued-ytd">0.0</div>
+                                <div class="stat-label">Accrued YTD</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="stat-used-ytd">0.0</div>
+                                <div class="stat-label">Used YTD</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="stat-upcoming">0</div>
+                                <div class="stat-label">Upcoming Trips</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="stat-remaining-days">0</div>
+                                <div class="stat-label">Days Left in Year</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card accrual-card">
+                        <div class="card-header">
+                            <h2>Accrual Info</h2>
+                        </div>
+                        <div class="accrual-details">
+                            <div class="accrual-row">
+                                <span>Per Pay Period</span>
+                                <span id="accrual-per-period">1.0 day</span>
+                            </div>
+                            <div class="accrual-row">
+                                <span>Pay Periods/Year</span>
+                                <span id="pay-periods">26</span>
+                            </div>
+                            <div class="accrual-row">
+                                <span>Annual Accrual</span>
+                                <span id="annual-accrual">26.0 days</span>
+                            </div>
+                            <div class="accrual-row">
+                                <span>Next Accrual</span>
+                                <span id="next-accrual-date">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card month-card">
+                        <div class="card-header">
+                            <h2>This Month</h2>
+                            <span id="current-month-name"></span>
+                        </div>
+                        <div class="month-mini-calendar" id="mini-calendar"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-calendar">
+                <div class="card calendar-card">
+                    <div class="card-header">
+                        <button class="btn btn-sm" id="cal-prev-month">&lt;</button>
+                        <h2 id="calendar-title"></h2>
+                        <button class="btn btn-sm" id="cal-next-month">&gt;</button>
+                        <button class="btn btn-sm" id="cal-today-btn">Today</button>
+                    </div>
+                    <div class="calendar-grid" id="calendar-grid"></div>
+                    <div class="calendar-legend">
+                        <span class="legend-item"><span class="legend-color holiday"></span> Holiday</span>
+                        <span class="legend-item"><span class="legend-color vacation"></span> Vacation</span>
+                        <span class="legend-item"><span class="legend-color today"></span> Today</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-vacations">
+                <div class="card vacations-card">
+                    <div class="card-header">
+                        <h2>Planned Vacations</h2>
+                        <button class="btn btn-primary" id="btn-add-vacation">+ Add Vacation</button>
+                    </div>
+                    <div class="vacations-list" id="vacations-list">
+                        <div class="empty-state" id="empty-vacations">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2.75 2.75 0 0 1-5.46 0"></path>
+                            </svg>
+                            <p>No vacations planned yet</p>
+                            <p class="empty-hint">Add your first vacation to see it here</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-forecast">
+                <div class="card forecast-card">
+                    <div class="card-header">
+                        <h2>PTO Balance Forecast</h2>
+                        <select id="forecast-year" class="form-select">
+                            <option value="2026" selected>2026</option>
+                            <option value="2027">2027</option>
+                        </select>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="forecast-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card forecast-details-card">
+                    <div class="card-header">
+                        <h2>Monthly Breakdown</h2>
+                    </div>
+                    <div class="forecast-table-container">
+                        <table class="forecast-table" id="forecast-table">
+                            <thead>
+                                <tr>
+                                    <th>Month</th>
+                                    <th>Accrued</th>
+                                    <th>Used</th>
+                                    <th>Balance</th>
+                                    <th>Limit</th>
+                                </tr>
+                            </thead>
+                            <tbody id="forecast-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <div class="modal-overlay" id="settings-modal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2>Settings</h2>
+                    <button class="btn btn-icon modal-close" id="btn-close-settings">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="settings-form" class="settings-form">
+                        <div class="form-group">
+                            <label for="accrual-type">Accrual Type</label>
+                            <select id="accrual-type" name="pto_accrual_type">
+                                <option value="days">Days</option>
+                                <option value="hours">Hours</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="accrual-per-period">Accrual Per Pay Period</label>
+                            <input type="number" id="accrual-per-period" name="pto_accrual_per_pay_period" step="0.25" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="pay-periods">Pay Periods Per Year</label>
+                            <select id="pay-periods" name="pay_periods_per_year">
+                                <option value="24">24 (Bi-weekly x 2)</option>
+                                <option value="26" selected>26 (Bi-weekly)</option>
+                                <option value="27">27 (Semi-monthly x 1.08)</option>
+                                <option value="52">52 (Weekly)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="accrual-method">Accrual Method</label>
+                            <select id="accrual-method" name="accrual_method">
+                                <option value="full">Full (all days)</option>
+                                <option value="pro-rata">Pro-rata (business days only)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="carryover-limit">Carryover Limit (days)</label>
+                            <input type="number" id="carryover-limit" name="pto_carryover_limit" min="0" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="accrual-start">Accrual Start Date</label>
+                            <input type="date" id="accrual-start" name="accrual_start_date">
+                        </div>
+                        <div class="form-group">
+                            <label for="vesting">Vesting Schedule</label>
+                            <select id="vesting" name="pto_vesting_schedule">
+                                <option value="immediate" selected>Immediate</option>
+                                <option value="graded">Graded (1/yr)</option>
+                                <option value="cliff">Cliff (3 years)</option>
+                            </select>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="rollover" name="pto_uses_rollover" checked>
+                                <span>Allow rollover</span>
+                            </label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="lose-limit" name="pto_lose_above_limit" checked>
+                                <span>Cap at carryover limit</span>
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save Settings</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="vacation-modal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2>Add Vacation</h2>
+                    <button class="btn btn-icon modal-close" id="btn-close-vacation">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="vacation-form" class="vacation-form">
+                        <div class="form-group">
+                            <label for="vacation-name">Trip Name</label>
+                            <input type="text" id="vacation-name" name="name" placeholder="e.g., Summer Vacation" required>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="vacation-start">Start Date</label>
+                                <input type="date" id="vacation-start" name="start_date" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="vacation-end">End Date</label>
+                                <input type="date" id="vacation-end" name="end_date" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="vacation-days">Days (auto-calculated)</label>
+                            <input type="number" id="vacation-days" name="days" step="0.5" min="0" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="vacation-hours">Hours (optional)</label>
+                            <input type="number" id="vacation-hours" name="hours" step="0.5" min="0" value="0">
+                        </div>
+                        <div class="vacation-preview" id="vacation-preview"></div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="btn-cancel-vacation">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Add Vacation</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="toast" id="toast"></div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
