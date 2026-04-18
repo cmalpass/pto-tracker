@@ -279,7 +279,6 @@ function setupVacationModal() {
             name: form.name.value,
             start_date: form.start_date.value,
             end_date: form.end_date.value,
-            days: parseFloat(form.days.value) || 0,
             hours: parseFloat(form.hours.value) || 0
         };
         try {
@@ -308,15 +307,12 @@ function calcVacationDays() {
     }
     let days = 0;
     const current = new Date(startDate);
-    const holidays = ['2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-07-04','2026-09-07','2026-11-26','2026-12-25'];
     while (current <= endDate) {
         if (current.getDay() !== 0 && current.getDay() !== 6) {
-            const dateStr = current.toISOString().split('T')[0];
-            if (!holidays.includes(dateStr)) days += 0.5;
+            days += 1;
         }
         current.setDate(current.getDate() + 1);
     }
-    days = Math.round(days * 2) / 2;
     document.getElementById('vacation-days').value = days;
     const preview = document.getElementById('vacation-preview');
     preview.textContent = `This trip will use ${days} PTO days`;
@@ -340,9 +336,10 @@ function setupSettings() {
         e.preventDefault();
         const form = e.target;
         const data = {};
-        for (const [key, value] of Object.entries(form)) {
-            if (value.type === 'checkbox') data[key] = value.checked;
-            else if (value.type !== 'button') data[key] = value.value;
+        for (const el of form.elements) {
+            if (!el.name || el.type === 'button' || el.type === 'submit') continue;
+            if (el.type === 'checkbox') data[el.name] = el.checked;
+            else data[el.name] = el.value;
         }
         try {
             await API.put('/api/config', data);
@@ -362,7 +359,7 @@ async function openSettings() {
         state.config = config;
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
         document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
-        document.getElementById('pay-periods').value = config.pay_periods_per_year || 26;
+        document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
         document.getElementById('accrual-method').value = config.accrual_method || 'full';
         document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
         document.getElementById('accrual-start').value = config.accrual_start_date || new Date().toISOString().split('T')[0];
@@ -381,8 +378,8 @@ function closeSettings() {
 
 async function loadForecast() {
     const yearSelect = document.getElementById('forecast-year');
-    if (yearSelect) {
-        yearSelect.value = state.currentYear;
+    if (yearSelect && !yearSelect.dataset.listenerAttached) {
+        yearSelect.dataset.listenerAttached = 'true';
         yearSelect.addEventListener('change', async (e) => {
             state.currentYear = parseInt(e.target.value);
             await loadForecast();
@@ -391,7 +388,11 @@ async function loadForecast() {
     try {
         const data = await API.get(`/api/balance?year=${state.currentYear}`);
         state.forecast = data.forecast || [];
-        renderForecastChart();
+        try {
+            renderForecastChart();
+        } catch (chartErr) {
+            console.error('Failed to render chart:', chartErr);
+        }
         renderForecastTable();
     } catch (err) {
         console.error('Failed to load forecast:', err);

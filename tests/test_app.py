@@ -94,6 +94,7 @@ async def test_forecast_table():
         await page.goto(BASE_URL)
         await page.click("button:has-text('Forecast')")
         await page.wait_for_timeout(500)
+        await page.wait_for_selector(".forecast-table tbody tr", timeout=10000)
         assert await page.locator(".forecast-table").is_visible()
         assert await page.locator("th:has-text('Month')").is_visible()
         assert await page.locator("th:has-text('Accrued')").is_visible()
