@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.db
+instance/
+.env
+*.mp4
+screenshots/
+node_modules/
