@@ -3,6 +3,7 @@ import os
 import json
 import sqlite3
 import math
+import calendar
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, render_template, g
 import holidays
@@ -321,8 +322,7 @@ def api_get_month_calendar(year, month):
                 'color': '#e74c3c'
             })
     db = get_db()
-    import calendar as cal_mod
-    last_day = cal_mod.monthrange(year, month)[1]
+    last_day = calendar.monthrange(year, month)[1]
     rows = db.execute(
         'SELECT * FROM vacations WHERE start_date <= ? AND end_date >= ?',
         (f'{year}-{month:02d}-{last_day:02d}', f'{year}-{month:02d}-01')
