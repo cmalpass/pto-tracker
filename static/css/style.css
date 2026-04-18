@@ -598,6 +598,14 @@ body {
     font-weight: 500;
     box-shadow: var(--shadow-lg);
     z-index: 2000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, visibility 0.3s;
+}
+
+.toast.show {
+    opacity: 1;
+    visibility: visible;
     animation: slideIn 0.3s ease;
 }
 
