@@ -321,10 +321,8 @@ def api_get_month_calendar(year, month):
                 'color': '#e74c3c'
             })
     db = get_db()
-    if month == 12:
-        last_day = 31
-    else:
-        last_day = (datetime(year, month + 1, 1) - timedelta(days=1)).day
+    import calendar as cal_mod
+    last_day = cal_mod.monthrange(year, month)[1]
     rows = db.execute(
         'SELECT * FROM vacations WHERE start_date <= ? AND end_date >= ?',
         (f'{year}-{month:02d}-{last_day:02d}', f'{year}-{month:02d}-01')

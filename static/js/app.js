@@ -279,7 +279,6 @@ function setupVacationModal() {
             name: form.name.value,
             start_date: form.start_date.value,
             end_date: form.end_date.value,
-            days: parseFloat(form.days.value) || 0,
             hours: parseFloat(form.hours.value) || 0
         };
         try {
