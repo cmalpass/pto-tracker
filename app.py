@@ -4,7 +4,7 @@ import json
 import sqlite3
 import math
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
@@ -54,6 +54,8 @@ def init_db():
     defaults = {
         'pto_accrual_per_pay_period': '1.0',
         'pto_accrual_type': 'days',
+        'pto_hours_per_day': '8',
+        'pto_holidays_require_pto': 'true',
         'pay_periods_per_year': '26',
         'accrual_start_date': '2026-01-01',
         'accrual_method': 'pro-rata',
@@ -79,10 +81,10 @@ def get_config():
     for row in rows:
         key = row['key']
         value = row['value']
-        if key in ('pto_accrual_per_pay_period', 'pay_periods_per_year',
+        if key in ('pto_accrual_per_pay_period', 'pay_periods_per_year', 'pto_hours_per_day',
                     'pto_carryover_limit', 'pto_grace_period_days'):
             config[key] = float(value)
-        elif key in ('pto_uses_rollover', 'pto_lose_above_limit'):
+        elif key in ('pto_uses_rollover', 'pto_lose_above_limit', 'pto_holidays_require_pto'):
             config[key] = value.lower() == 'true'
         elif key in ('pto_cashout_rate',):
             config[key] = float(value)
@@ -102,16 +104,38 @@ def is_business_day(date):
 def get_vacation_days(start_date, end_date, config):
     start = datetime.strptime(start_date, '%Y-%m-%d').date()
     end = datetime.strptime(end_date, '%Y-%m-%d').date()
-    holidays_set = get_us_holidays(start.year)
-    if start.year != end.year:
-        holidays_set.update(get_us_holidays(end.year))
+    holidays_require_pto = config.get('pto_holidays_require_pto', True)
+    holidays_set = set()
+    if not holidays_require_pto:
+        for year in range(start.year, end.year + 1):
+            holidays_set.update(get_us_holidays(year))
     days = 0
     current = start
     while current <= end:
-        if is_business_day(current) and current not in holidays_set:
+        if is_business_day(current) and (holidays_require_pto or current not in holidays_set):
             days += 1
         current += timedelta(days=1)
     return days
+
+
+def parse_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
+
+def normalize_quarter_hours(value):
+    try:
+        hours = float(value or 0)
+    except (TypeError, ValueError):
+        return None
+    if hours < 0:
+        return None
+    return round(hours * 4) / 4
 
 
 def calculate_accrual_to_date(target_date, config):
@@ -139,35 +163,127 @@ def calculate_accrual_to_date(target_date, config):
     return accrued
 
 
-def calculate_vacation_usage(target_date, config):
+def calculate_vacation_usage_in_range(range_start, range_end, config):
+    """Return (days, hours) of vacation used within [range_start, range_end] (date objects).
+
+    Vacations that overlap the range are clipped to it. Year-spanning vacations are
+    split so each year only receives the days that fall within it.
+    """
     db = get_db()
-    target = datetime.strptime(target_date, '%Y-%m-%d').date()
     rows = db.execute(
-        'SELECT start_date, end_date, days, hours FROM vacations '
-        'WHERE end_date <= ? ORDER BY start_date',
-        (target_date,)
+        'SELECT * FROM vacations WHERE start_date <= ? AND end_date >= ? ORDER BY start_date',
+        (range_end.strftime('%Y-%m-%d'), range_start.strftime('%Y-%m-%d'))
     ).fetchall()
-    total_days = 0
-    total_hours = 0
+    total_days = 0.0
+    total_hours = 0.0
     for row in rows:
-        total_days += row['days']
-        total_hours += row['hours']
+        vac_start = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
+        vac_end = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
+        eff_start = max(vac_start, range_start)
+        eff_end = min(vac_end, range_end)
+        if eff_start > eff_end:
+            continue
+        if eff_start == vac_start and eff_end == vac_end:
+            # Entirely within range — use stored (authoritative) values
+            total_days += row['days']
+            total_hours += row['hours']
+        else:
+            # Partially within range: apportion stored row['days'] by overlap ratio
+            # so split ranges never consume more than the saved entry total.
+            total_business_days = get_vacation_days(
+                vac_start.strftime('%Y-%m-%d'),
+                vac_end.strftime('%Y-%m-%d'),
+                config
+            )
+            overlap_business_days = get_vacation_days(
+                eff_start.strftime('%Y-%m-%d'),
+                eff_end.strftime('%Y-%m-%d'),
+                config
+            )
+
+            if total_business_days > 0:
+                total_days += row['days'] * (overlap_business_days / total_business_days)
+            elif vac_start >= range_start:
+                # Degenerate edge case: no business days in range. Attribute manual
+                # override to the range containing the start date.
+                total_days += row['days']
+
+            # Partial-hour PTO is always a single day; only attribute hours when
+            # the vacation's start date falls inside this range.
+            if vac_start >= range_start:
+                total_hours += row['hours']
     return total_days, total_hours
 
 
 def calculate_balance_on_date(target_date, config):
-    accrued = calculate_accrual_to_date(target_date, config)
-    used_days, used_hours = calculate_vacation_usage(target_date, config)
-    balance_days = accrued - used_days
-    if config['pto_lose_above_limit'] and balance_days > config['pto_carryover_limit']:
-        balance_days = config['pto_carryover_limit']
-    if balance_days < 0:
-        balance_days = 0
+    """Compute PTO balance on target_date with proper year-end rollover.
+
+    For the first accrual year: balance = accrued − used (no cap during year).
+    For subsequent years:
+      1. Compute Dec-31 balance of the prior year (recursive).
+      2. Apply rollover rules:
+         - pto_uses_rollover=False  → carry = 0 (use-it-or-lose-it)
+         - pto_lose_above_limit=True → carry = min(carry, carryover_limit)
+         - otherwise               → carry = full Dec-31 balance
+      3. balance = carry + this_year_accruals − this_year_usage
+    The cap (lose_above_limit) is enforced ONLY at year-end, not continuously.
+    """
+    target = datetime.strptime(target_date, '%Y-%m-%d').date()
+    accrual_start = datetime.strptime(config['accrual_start_date'], '%Y-%m-%d').date()
+
+    hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
+    is_hours = config.get('pto_accrual_type') == 'hours'
+    carryover_limit_days = config['pto_carryover_limit']
+    uses_rollover = config.get('pto_uses_rollover', True)
+    lose_above_limit = config.get('pto_lose_above_limit', False)
+    effective_limit = (carryover_limit_days * hours_per_day) if is_hours else carryover_limit_days
+
+    # --- Determine year window and carried-over balance ---
+    if target.year <= accrual_start.year:
+        # First (or pre-start) accrual year — no carry
+        carry_balance = 0.0
+        year_window_start = accrual_start
+    else:
+        dec31_prev = date(target.year - 1, 12, 31)
+        prev = calculate_balance_on_date(dec31_prev.strftime('%Y-%m-%d'), config)
+        carry_balance = prev['balance']
+
+        # Apply year-end rollover rules
+        if not uses_rollover:
+            carry_balance = 0.0          # use-it-or-lose-it
+        elif lose_above_limit and carry_balance > effective_limit:
+            carry_balance = effective_limit  # cap at rollover limit
+
+        year_window_start = date(target.year, 1, 1)
+
+    # --- Year-specific accrual ---
+    accrued_to_target = calculate_accrual_to_date(target_date, config)
+    if year_window_start > accrual_start:
+        dec31_prev_str = (year_window_start - timedelta(days=1)).strftime('%Y-%m-%d')
+        accrued_to_window_start = calculate_accrual_to_date(dec31_prev_str, config)
+        year_accrual = accrued_to_target - accrued_to_window_start
+    else:
+        year_accrual = accrued_to_target
+
+    # --- Year-specific usage ---
+    used_days, used_hours = calculate_vacation_usage_in_range(year_window_start, target, config)
+    if is_hours:
+        used_amount = (used_days * hours_per_day) + used_hours
+    else:
+        used_amount = used_days + (used_hours / hours_per_day)
+
+    balance = carry_balance + year_accrual - used_amount
+    if balance < 0:
+        balance = 0.0
+
     return {
-        'accrued': round(accrued, 2),
-        'used': round(used_days, 2),
-        'balance': round(balance_days, 2),
-        'limit': config['pto_carryover_limit']
+        'accrued': round(carry_balance + year_accrual, 2),
+        'used': round(used_amount, 2),
+        'used_days': round(used_days, 2),
+        'used_hours': round(used_hours, 2),
+        'balance': round(balance, 2),
+        'limit': round(effective_limit, 2),
+        'carry': round(carry_balance, 2)
     }
 
 
@@ -215,6 +331,271 @@ def generate_calendar_events(year, config):
                 })
     events.sort(key=lambda x: x['date'])
     return events
+
+
+def _daterange(start, end):
+    current = start
+    while current <= end:
+        yield current
+        current += timedelta(days=1)
+
+
+def _build_reserved_dates(year, vacations):
+    reserved = set()
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    for row in vacations:
+        start = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
+        end = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
+        overlap_start = max(start, year_start)
+        overlap_end = min(end, year_end)
+        if overlap_start > overlap_end:
+            continue
+        for day in _daterange(overlap_start, overlap_end):
+            reserved.add(day)
+    return reserved
+
+
+def _valid_pto_day(day, holidays_set, reserved_dates, earliest_date, year, holidays_require_pto):
+    return (
+        day.year == year
+        and day >= earliest_date
+        and is_business_day(day)
+        and (holidays_require_pto or day not in holidays_set)
+        and day not in reserved_dates
+    )
+
+
+def _continuous_days_off_count(pto_dates, holidays_set):
+    if not pto_dates:
+        return 0
+
+    def is_day_off(check_day):
+        return (check_day.weekday() >= 5) or (check_day in holidays_set) or (check_day in pto_dates)
+
+    start = min(pto_dates)
+    end = max(pto_dates)
+
+    cursor = start - timedelta(days=1)
+    while is_day_off(cursor):
+        start = cursor
+        cursor -= timedelta(days=1)
+
+    cursor = end + timedelta(days=1)
+    while is_day_off(cursor):
+        end = cursor
+        cursor += timedelta(days=1)
+
+    return (end - start).days + 1
+
+
+def _make_suggestion(start_day, end_day, title, reason, category, holidays_set, holidays_require_pto, holiday_date=None):
+    all_dates = list(_daterange(start_day, end_day))
+    pto_dates = [
+        day.strftime('%Y-%m-%d')
+        for day in all_dates
+        if day.weekday() < 5 and (holidays_require_pto or day not in holidays_set)
+    ]
+    pto_days = len(pto_dates)
+    days_off = _continuous_days_off_count(set(all_dates), holidays_set)
+    return {
+        'name': title,
+        'start_date': start_day.strftime('%Y-%m-%d'),
+        'end_date': end_day.strftime('%Y-%m-%d'),
+        'holiday_date': holiday_date.strftime('%Y-%m-%d') if holiday_date else None,
+        'pto_dates': pto_dates,
+        'pto_days': pto_days,
+        'total_days_off': days_off,
+        'impact_score': round(days_off / pto_days, 2) if pto_days else 0,
+        'category': category,
+        'reason': reason,
+        'tags': [category.replace('-', ' ')]
+    }
+
+
+def generate_vacation_suggestions(year, config):
+    db = get_db()
+    vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
+
+    today = datetime.now().date()
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    earliest = max(today, year_start)
+
+    is_hours = config.get('pto_accrual_type') == 'hours'
+    hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
+    holidays_require_pto = config.get('pto_holidays_require_pto', True)
+
+    dec31_balance = calculate_balance_on_date(year_end.strftime('%Y-%m-%d'), config)
+    remaining_amount = dec31_balance['balance']
+    remaining_days = (remaining_amount / hours_per_day) if is_hours else remaining_amount
+
+    carry_limit_days = config.get('pto_carryover_limit', 0) or 0
+    carry_limit_amount = (carry_limit_days * hours_per_day) if is_hours else carry_limit_days
+    if not config.get('pto_uses_rollover', True):
+        forfeit_amount = remaining_amount
+    elif config.get('pto_lose_above_limit', False):
+        forfeit_amount = max(0.0, remaining_amount - carry_limit_amount)
+    else:
+        forfeit_amount = 0.0
+
+    forfeit_days = (forfeit_amount / hours_per_day) if is_hours else forfeit_amount
+    target_days = forfeit_days if forfeit_days > 0 else min(remaining_days, 10.0)
+    budget_days = max(0, int(math.floor(target_days + 1e-9)))
+
+    reserved_dates = _build_reserved_dates(year, vacations)
+    holidays_map = get_us_holidays(year)
+    holidays_set = set(holidays_map.keys())
+
+    candidates = []
+    seen_ranges = set()
+
+    def add_candidate(start_day, end_day, title, reason, category, holiday_date=None):
+        if start_day > end_day:
+            return
+        if start_day < earliest:
+            return
+        for d in _daterange(start_day, end_day):
+            # Vacation ranges may include a holiday date, but all non-holiday weekdays
+            # must be valid PTO days and not already reserved.
+            if d == holiday_date:
+                continue
+            if not _valid_pto_day(d, holidays_set, reserved_dates, earliest, year, holidays_require_pto):
+                return
+
+        if holiday_date and holiday_date.year == year and holiday_date >= earliest and holiday_date not in reserved_dates:
+            start_day = min(start_day, holiday_date)
+            end_day = max(end_day, holiday_date)
+
+        key = (start_day, end_day)
+        if key in seen_ranges:
+            return
+        seen_ranges.add(key)
+        suggestion = _make_suggestion(
+            start_day,
+            end_day,
+            title,
+            reason,
+            category,
+            holidays_set,
+            holidays_require_pto,
+            holiday_date=holiday_date
+        )
+        if suggestion['pto_days'] <= 0:
+            return
+        candidates.append(suggestion)
+
+    for holiday_day, holiday_name in sorted(holidays_map.items()):
+        weekday = holiday_day.weekday()
+        if weekday == 0:
+            add_candidate(
+                holiday_day - timedelta(days=3),
+                holiday_day - timedelta(days=3),
+                f'Extend {holiday_name}',
+                f'Take Friday off to turn {holiday_name} into a 4-day break.',
+                'holiday-bridge',
+                holiday_date=holiday_day
+            )
+        elif weekday == 1:
+            add_candidate(
+                holiday_day - timedelta(days=1),
+                holiday_day - timedelta(days=1),
+                f'Bridge into {holiday_name}',
+                f'Take Monday off before {holiday_name} for a longer break.',
+                'holiday-bridge',
+                holiday_date=holiday_day
+            )
+        elif weekday == 2:
+            add_candidate(
+                holiday_day + timedelta(days=1),
+                holiday_day + timedelta(days=2),
+                f'Long break after {holiday_name}',
+                f'Take Thu/Fri after {holiday_name} for a 5-day stretch.',
+                'holiday-bridge',
+                holiday_date=holiday_day
+            )
+        elif weekday == 3:
+            add_candidate(
+                holiday_day + timedelta(days=1),
+                holiday_day + timedelta(days=1),
+                f'Extend {holiday_name}',
+                f'Take Friday off after {holiday_name} for a 4-day weekend.',
+                'holiday-bridge',
+                holiday_date=holiday_day
+            )
+        elif weekday == 4:
+            add_candidate(
+                holiday_day + timedelta(days=3),
+                holiday_day + timedelta(days=3),
+                f'Extend {holiday_name}',
+                f'Take Monday off after {holiday_name} for extra recovery time.',
+                'holiday-bridge',
+                holiday_date=holiday_day
+            )
+
+    current = earliest
+    while current <= year_end:
+        if current.weekday() in (0, 4):
+            add_candidate(
+                current,
+                current,
+                'Create a Long Weekend',
+                'Use a single PTO day next to the weekend for a 3-day break.',
+                'high-impact'
+            )
+        current += timedelta(days=1)
+
+    candidates.sort(key=lambda c: (c['impact_score'], c['total_days_off']), reverse=True)
+
+    selected = []
+    selected_dates = set(reserved_dates)
+    used_days = 0
+    hard_cap_days = max(0, int(min(max(remaining_days, 0), 15)))
+    max_days_to_use = budget_days if budget_days > 0 else hard_cap_days
+
+    for candidate in candidates:
+        if len(selected) >= 12:
+            break
+        candidate_start = datetime.strptime(candidate['start_date'], '%Y-%m-%d').date()
+        candidate_end = datetime.strptime(candidate['end_date'], '%Y-%m-%d').date()
+        candidate_dates = set(_daterange(candidate_start, candidate_end))
+        if candidate_dates & selected_dates:
+            continue
+        if max_days_to_use > 0 and (used_days + candidate['pto_days']) > max_days_to_use:
+            continue
+        selected.append(candidate)
+        selected_dates.update(candidate_dates)
+        used_days += candidate['pto_days']
+
+    suggested_hours = used_days * hours_per_day
+    if is_hours:
+        planned_suggestion_amount = round(suggested_hours, 2)
+    else:
+        planned_suggestion_amount = round(float(used_days), 2)
+
+    summary_message = 'Suggestions are optimized for holiday alignment and high impact time off.'
+    if forfeit_days > 0:
+        summary_message = 'You are on track to forfeit PTO unless you schedule additional time off.'
+    elif remaining_days > 0:
+        summary_message = 'You still have PTO available; these options maximize time off per PTO day.'
+
+    return {
+        'year': year,
+        'unit': 'hours' if is_hours else 'days',
+        'hours_per_day': round(hours_per_day, 2),
+        'remaining_balance': round(remaining_amount, 2),
+        'remaining_balance_days_equivalent': round(remaining_days, 2),
+        'forfeit_risk': round(forfeit_amount, 2),
+        'forfeit_risk_days_equivalent': round(forfeit_days, 2),
+        'target_to_plan_days': round(target_days, 2),
+        'suggested_pto_amount': planned_suggestion_amount,
+        'suggested_pto_days': used_days,
+        'summary': {
+            'message': summary_message,
+            'recommendation': 'Add one or more suggestions to your plan to avoid unused PTO at year end.'
+        },
+        'suggestions': selected
+    }
 
 
 @app.route('/')
@@ -279,11 +660,24 @@ def api_add_vacation():
     name = data.get('name', 'Vacation')
     start_date = data.get('start_date')
     end_date = data.get('end_date')
-    if 'days' not in data:
-        days = get_vacation_days(start_date, end_date, get_config())
+    if not start_date or not end_date:
+        return jsonify({'error': 'start_date and end_date are required'}), 400
+    if start_date > end_date:
+        return jsonify({'error': 'start_date cannot be after end_date'}), 400
+    config = get_config()
+    auto_days = parse_bool(data.get('auto_days', True), default=True)
+    if auto_days:
+        days = get_vacation_days(start_date, end_date, config)
     else:
-        days = data.get('days', 0)
-    hours = data.get('hours', 0)
+        try:
+            days = float(data.get('days', 0) or 0)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'days must be numeric'}), 400
+        if days < 0:
+            return jsonify({'error': 'days cannot be negative'}), 400
+    hours = normalize_quarter_hours(data.get('hours', 0))
+    if hours is None:
+        return jsonify({'error': 'hours must be non-negative and in numeric format'}), 400
     cursor = db.execute(
         'INSERT INTO vacations (name, start_date, end_date, days, hours) VALUES (?, ?, ?, ?, ?)',
         (name, start_date, end_date, days, hours)
@@ -291,6 +685,72 @@ def api_add_vacation():
     db.commit()
     row = db.execute('SELECT * FROM vacations WHERE id = ?', (cursor.lastrowid,)).fetchone()
     return jsonify(dict(row)), 201
+
+
+@app.route('/api/vacations/calculate-days', methods=['GET'])
+def api_calculate_vacation_days():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    if not start_date or not end_date:
+        return jsonify({'error': 'start_date and end_date are required'}), 400
+    if start_date > end_date:
+        return jsonify({'error': 'start_date cannot be after end_date'}), 400
+    try:
+        days = get_vacation_days(start_date, end_date, get_config())
+    except ValueError:
+        return jsonify({'error': 'Dates must use yyyy-mm-dd format'}), 400
+    return jsonify({'start_date': start_date, 'end_date': end_date, 'days': days})
+
+
+@app.route('/api/vacations/suggestions', methods=['GET'])
+def api_get_vacation_suggestions():
+    year = request.args.get('year', datetime.now().year, type=int)
+    if year < 2000 or year > 2100:
+        return jsonify({'error': 'year must be between 2000 and 2100'}), 400
+    config = get_config()
+    payload = generate_vacation_suggestions(year, config)
+    return jsonify(payload)
+
+
+@app.route('/api/vacations/<int:vacation_id>', methods=['PUT'])
+def api_update_vacation(vacation_id):
+    data = request.get_json()
+    db = get_db()
+    existing = db.execute('SELECT * FROM vacations WHERE id = ?', (vacation_id,)).fetchone()
+    if not existing:
+        return jsonify({'error': 'Vacation not found'}), 404
+
+    name = data.get('name', existing['name'])
+    start_date = data.get('start_date', existing['start_date'])
+    end_date = data.get('end_date', existing['end_date'])
+
+    if not start_date or not end_date:
+        return jsonify({'error': 'start_date and end_date are required'}), 400
+    if start_date > end_date:
+        return jsonify({'error': 'start_date cannot be after end_date'}), 400
+
+    config = get_config()
+    auto_days = parse_bool(data.get('auto_days', True), default=True)
+    if auto_days:
+        days = get_vacation_days(start_date, end_date, config)
+    else:
+        try:
+            days = float(data.get('days', existing['days']) or 0)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'days must be numeric'}), 400
+        if days < 0:
+            return jsonify({'error': 'days cannot be negative'}), 400
+    hours = normalize_quarter_hours(data.get('hours', existing['hours']))
+    if hours is None:
+        return jsonify({'error': 'hours must be non-negative and in numeric format'}), 400
+
+    db.execute(
+        'UPDATE vacations SET name = ?, start_date = ?, end_date = ?, days = ?, hours = ? WHERE id = ?',
+        (name, start_date, end_date, days, hours, vacation_id)
+    )
+    db.commit()
+    row = db.execute('SELECT * FROM vacations WHERE id = ?', (vacation_id,)).fetchone()
+    return jsonify(dict(row))
 
 
 @app.route('/api/vacations/<int:vacation_id>', methods=['DELETE'])
@@ -336,13 +796,17 @@ def api_get_month_calendar(year, month):
         else:
             month_end = datetime(year, month + 1, 1).date() - timedelta(days=1)
         if start <= month_end and end >= month_start:
-            events.append({
-                'date': row['start_date'],
-                'type': 'vacation',
-                'name': row['name'],
-                'color': '#3498db',
-                'vacation_id': row['id']
-            })
+            overlap_start = max(start, month_start)
+            overlap_end = min(end, month_end)
+            for i in range((overlap_end - overlap_start).days + 1):
+                day = overlap_start + timedelta(days=i)
+                events.append({
+                    'date': day.strftime('%Y-%m-%d'),
+                    'type': 'vacation',
+                    'name': row['name'],
+                    'color': '#3498db',
+                    'vacation_id': row['id']
+                })
     events.sort(key=lambda x: x['date'])
     return jsonify({'year': year, 'month': month, 'events': events})
 
@@ -357,16 +821,23 @@ def api_get_stats():
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
     year_end = datetime(datetime.now().year, 12, 31).date()
     remaining_vacations = 0
+    remaining_hours = 0
+    hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
     for v in vacations:
         end = datetime.strptime(v['end_date'], '%Y-%m-%d').date()
         if end <= year_end and end >= datetime.now().date():
             remaining_vacations += v['days']
+            remaining_hours += v['hours']
+    if config.get('pto_accrual_type') == 'hours':
+        remaining_total = (remaining_vacations * hours_per_day) + remaining_hours
+    else:
+        remaining_total = remaining_vacations + (remaining_hours / hours_per_day)
     return jsonify({
         'today': today,
         'current_balance': balance,
         'yearly_forecast': forecast,
         'upcoming_vacations': len([v for v in vacations if datetime.strptime(v['end_date'], '%Y-%m-%d').date() >= datetime.now().date()]),
-        'remaining_vacation_days': remaining_vacations,
+        'remaining_vacation_days': round(remaining_total, 2),
         'total_vacations': len(vacations)
     })
 

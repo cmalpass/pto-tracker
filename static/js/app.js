@@ -33,7 +33,10 @@ const state = {
     calendarEvents: {},
     currentYear: new Date().getFullYear(),
     currentMonth: new Date().getMonth(),
-    forecastChart: null
+    forecastChart: null,
+    editingVacationId: null,
+    vacationCalcRequestId: 0,
+    vacationSuggestions: null
 };
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -74,6 +77,9 @@ async function loadDashboard() {
             API.get('/api/stats')
         ]);
         state.config = config;
+        const unitLabel = config.pto_accrual_type === 'hours' ? 'hours available' : 'days available';
+        const balanceLabel = document.querySelector('.balance-label');
+        if (balanceLabel) balanceLabel.textContent = unitLabel;
         document.getElementById('current-balance').textContent = balance.balance.toFixed(1);
         document.getElementById('accrued-balance').textContent = balance.accrued.toFixed(1);
         document.getElementById('used-balance').textContent = balance.used.toFixed(1);
@@ -150,6 +156,13 @@ function setupCalendar() {
         state.currentMonth = now.getMonth();
         renderCalendar();
     });
+
+    // Allow adding PTO directly from a calendar day.
+    document.getElementById('calendar-grid').addEventListener('click', (e) => {
+        const dayEl = e.target.closest('.cal-day[data-date]');
+        if (!dayEl) return;
+        openCreateVacationModal(dayEl.dataset.date);
+    });
 }
 
 async function renderCalendar() {
@@ -159,7 +172,6 @@ async function renderCalendar() {
         const events = await API.get(`/api/calendar/${state.currentYear}/${state.currentMonth + 1}`);
         const container = document.getElementById('calendar-grid');
         let html = `<div class="cal-header">${DAYS.map(d => `<span>${d}</span>`).join('')}</div>`;
-        html += '<div class="cal-grid">';
         const firstDay = new Date(state.currentYear, state.currentMonth, 1).getDay();
         const daysInMonth = new Date(state.currentYear, state.currentMonth + 1, 0).getDate();
         const prevDays = new Date(state.currentYear, state.currentMonth, 0).getDate();
@@ -177,7 +189,7 @@ async function renderCalendar() {
             html += `<div class="${classes}" data-date="${dateStr}"><span class="day-number">${d}</span>`;
             dayEvents.slice(0, 2).forEach(e => {
                 const label = e.type === 'holiday' ? e.name.substring(0, 8) : (e.name || 'Vacation').substring(0, 10);
-                html += `<span class="day-event">${label}</span>`;
+                html += `<span class="day-event ${e.type}">${label}</span>`;
             });
             html += '</div>';
         }
@@ -186,7 +198,6 @@ async function renderCalendar() {
         for (let i = 1; i <= remaining; i++) {
             html += `<div class="cal-day other-month"><span class="day-number">${i}</span></div>`;
         }
-        html += '</div>';
         container.innerHTML = html;
     } catch (err) {
         console.error('Failed to load calendar:', err);
@@ -195,8 +206,14 @@ async function renderCalendar() {
 
 async function loadVacations() {
     try {
-        state.vacations = await API.get('/api/vacations');
+        const [vacations, suggestions] = await Promise.all([
+            API.get('/api/vacations'),
+            API.get(`/api/vacations/suggestions?year=${new Date().getFullYear()}`)
+        ]);
+        state.vacations = vacations;
+        state.vacationSuggestions = suggestions;
         renderVacationsList();
+        renderVacationSuggestions();
     } catch (err) {
         console.error('Failed to load vacations:', err);
     }
@@ -213,9 +230,13 @@ function renderVacationsList() {
     }
     let html = '';
     state.vacations.forEach(v => {
-        const start = new Date(v.start_date);
-        const end = new Date(v.end_date);
+        const start = parseIsoDateToLocal(v.start_date);
+        const end = parseIsoDateToLocal(v.end_date);
         const dateStr = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        const usageParts = [];
+        if ((v.days || 0) > 0) usageParts.push(`${v.days}d`);
+        if ((v.hours || 0) > 0) usageParts.push(`${Number(v.hours).toFixed(2).replace(/\.00$/, '')}h`);
+        const usageText = usageParts.length ? usageParts.join(' / ') : '0h';
         html += `
             <div class="vacation-item" data-id="${v.id}">
                 <div class="vacation-icon">
@@ -227,17 +248,194 @@ function renderVacationsList() {
                     <div class="vacation-name">${escapeHtml(v.name)}</div>
                     <div class="vacation-dates">${dateStr}</div>
                 </div>
-                <div class="vacation-days">${v.days}d${v.hours > 0 ? ` / ${v.hours}h` : ''}</div>
-                <button class="vacation-delete" onclick="deleteVacation(${v.id})" title="Delete">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="3 6 5 6 21 6"></polyline>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                </button>
+                <div class="vacation-days">${usageText}</div>
+                <div class="vacation-actions">
+                    <button class="vacation-edit" onclick="editVacation(${v.id})" title="Edit">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 20h9"></path>
+                            <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="vacation-delete" onclick="deleteVacation(${v.id})" title="Delete">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
         `;
     });
     container.innerHTML = html;
+}
+
+function renderVacationSuggestions() {
+    const summaryEl = document.getElementById('suggestions-summary');
+    const container = document.getElementById('suggestions-list');
+    const empty = document.getElementById('empty-suggestions');
+    if (!summaryEl || !container || !empty) return;
+
+    const payload = state.vacationSuggestions;
+    if (!payload) {
+        summaryEl.innerHTML = '';
+        container.innerHTML = '';
+        container.appendChild(empty);
+        empty.style.display = 'block';
+        return;
+    }
+
+    const risk = Number(payload.forfeit_risk || 0);
+    const remaining = Number(payload.remaining_balance || 0);
+    const unit = payload.unit || 'days';
+    const riskText = risk > 0 ? `${risk.toFixed(2)} ${unit}` : `0 ${unit}`;
+    const remainingText = `${remaining.toFixed(2)} ${unit}`;
+    summaryEl.innerHTML = `
+        <div class="suggestions-summary-main">${escapeHtml(payload.summary?.message || 'PTO suggestions are ready.')}</div>
+        <div class="suggestions-summary-sub">Remaining balance: <strong>${remainingText}</strong> • Forfeit risk: <strong>${riskText}</strong></div>
+    `;
+
+    const suggestions = payload.suggestions || [];
+    if (!suggestions.length) {
+        container.innerHTML = '';
+        container.appendChild(empty);
+        empty.style.display = 'block';
+        return;
+    }
+
+    const plannedKeys = new Set(
+        state.vacations.map(v => `${v.start_date}|${v.end_date}`)
+    );
+
+    container.innerHTML = suggestions.map((s, idx) => {
+        const start = parseIsoDateToLocal(s.start_date);
+        const end = parseIsoDateToLocal(s.end_date);
+        const dateStr = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        const ptoLabel = `${s.pto_days} PTO day${s.pto_days === 1 ? '' : 's'}`;
+        const offLabel = `${s.total_days_off} day${s.total_days_off === 1 ? '' : 's'} off`;
+        const suggestionKey = `${s.start_date}|${s.end_date}`;
+        const alreadyPlanned = plannedKeys.has(suggestionKey);
+        return `
+            <div class="suggestion-item" data-index="${idx}">
+                <div class="suggestion-main">
+                    <div class="suggestion-name">${escapeHtml(s.name || 'Suggested vacation')}</div>
+                    <div class="suggestion-dates">${dateStr}</div>
+                    <div class="suggestion-reason">${escapeHtml(s.reason || '')}</div>
+                    <div class="suggestion-metrics">${ptoLabel} • ${offLabel} • impact ${Number(s.impact_score || 0).toFixed(2)}x</div>
+                </div>
+                <div class="suggestion-actions">
+                    <span class="suggestion-tag">${escapeHtml((s.category || 'high-impact').replace('-', ' '))}</span>
+                    <button class="btn btn-primary btn-sm suggestion-add" data-index="${idx}" ${alreadyPlanned ? 'disabled' : ''}>${alreadyPlanned ? 'Added' : 'Add to Plan'}</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function addSuggestedVacation(index) {
+    const list = state.vacationSuggestions?.suggestions || [];
+    const suggestion = list[index];
+    if (!suggestion) return;
+
+    const suggestionStart = parseIsoDateToLocal(suggestion.start_date);
+    const suggestionEnd = parseIsoDateToLocal(suggestion.end_date);
+    const suggestionPtoDates = Array.isArray(suggestion.pto_dates) ? suggestion.pto_dates : [];
+
+    const holidayDate = suggestion.holiday_date || null;
+    let targetVacation = null;
+
+    if (holidayDate) {
+        const holiday = parseIsoDateToLocal(holidayDate);
+        targetVacation = state.vacations.find(v => {
+            const start = parseIsoDateToLocal(v.start_date);
+            const end = parseIsoDateToLocal(v.end_date);
+            return holiday >= start && holiday <= end;
+        }) || null;
+    }
+
+    try {
+        if (targetVacation) {
+            const existingStart = parseIsoDateToLocal(targetVacation.start_date);
+            const existingEnd = parseIsoDateToLocal(targetVacation.end_date);
+            const mergedStart = suggestionStart < existingStart ? suggestionStart : existingStart;
+            const mergedEnd = suggestionEnd > existingEnd ? suggestionEnd : existingEnd;
+
+            // Only add PTO days that are not already inside the existing vacation range.
+            const additionalPtoDays = suggestionPtoDates.filter(d => {
+                const day = parseIsoDateToLocal(d);
+                return day < existingStart || day > existingEnd;
+            }).length;
+
+            await API.put(`/api/vacations/${targetVacation.id}`, {
+                name: targetVacation.name,
+                start_date: toIsoDate(mergedStart),
+                end_date: toIsoDate(mergedEnd),
+                days: (Number(targetVacation.days || 0) + additionalPtoDays),
+                hours: Number(targetVacation.hours || 0),
+                auto_days: false
+            });
+            showToast('Suggestion merged into existing vacation', 'success');
+        } else {
+            await API.post('/api/vacations', {
+                name: suggestion.name || 'Suggested Vacation',
+                start_date: suggestion.start_date,
+                end_date: suggestion.end_date,
+                days: Number(suggestion.pto_days || 0),
+                auto_days: false,
+                hours: 0
+            });
+            showToast('Suggested vacation added', 'success');
+        }
+        await loadVacations();
+        loadDashboard();
+        loadForecast();
+        renderCalendar();
+    } catch (err) {
+        console.error('Failed to add suggested vacation:', err);
+        showToast('Failed to add suggestion', 'error');
+    }
+}
+
+function parseIsoDateToLocal(dateStr) {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+}
+
+function toIsoDate(value) {
+    if (!(value instanceof Date)) return '';
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+function openCreateVacationModal(prefillDate = null) {
+    state.editingVacationId = null;
+    document.getElementById('vacation-modal-title').textContent = 'Add Vacation';
+    document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
+    document.getElementById('vacation-auto-days').checked = true;
+    document.getElementById('vacation-modal').classList.add('active');
+    const selectedDate = prefillDate || new Date().toISOString().split('T')[0];
+    document.getElementById('vacation-start').value = selectedDate;
+    document.getElementById('vacation-end').value = selectedDate;
+    syncVacationDateBounds();
+    document.getElementById('vacation-hours').value = 0;
+    calcVacationDays();
+}
+
+function editVacation(id) {
+    const vacation = state.vacations.find(v => v.id === id);
+    if (!vacation) return;
+    state.editingVacationId = id;
+    document.getElementById('vacation-modal-title').textContent = 'Edit Vacation';
+    document.getElementById('btn-submit-vacation').textContent = 'Save Changes';
+    document.getElementById('vacation-name').value = vacation.name;
+    document.getElementById('vacation-start').value = vacation.start_date;
+    document.getElementById('vacation-end').value = vacation.end_date;
+    syncVacationDateBounds();
+    document.getElementById('vacation-hours').value = vacation.hours || 0;
+    document.getElementById('vacation-auto-days').checked = (vacation.days || 0) > 0;
+    calcVacationDays();
+    document.getElementById('vacation-modal').classList.add('active');
 }
 
 async function deleteVacation(id) {
@@ -259,70 +457,149 @@ function escapeHtml(str) {
 }
 
 function setupVacationModal() {
-    document.getElementById('btn-add-vacation').addEventListener('click', () => {
-        document.getElementById('vacation-modal').classList.add('active');
-        const today = new Date().toISOString().split('T')[0];
-        document.getElementById('vacation-start').value = today;
-        document.getElementById('vacation-end').value = today;
-    });
+    document.getElementById('btn-add-vacation').addEventListener('click', () => openCreateVacationModal());
     document.getElementById('btn-close-vacation').addEventListener('click', closeVacationModal);
     document.getElementById('btn-cancel-vacation').addEventListener('click', closeVacationModal);
     document.getElementById('vacation-modal').addEventListener('click', (e) => {
         if (e.target === document.getElementById('vacation-modal')) closeVacationModal();
     });
-    document.getElementById('vacation-start').addEventListener('change', calcVacationDays);
-    document.getElementById('vacation-end').addEventListener('change', calcVacationDays);
+    document.getElementById('vacation-start').addEventListener('change', () => {
+        syncVacationDateBounds();
+        calcVacationDays();
+    });
+    document.getElementById('vacation-end').addEventListener('change', () => {
+        syncVacationDateBounds();
+        calcVacationDays();
+    });
+    document.getElementById('vacation-hours').addEventListener('change', calcVacationDays);
+    document.getElementById('vacation-auto-days').addEventListener('change', calcVacationDays);
     document.getElementById('vacation-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const form = e.target;
+        const autoDays = form.auto_days.checked;
         const data = {
             name: form.name.value,
             start_date: form.start_date.value,
             end_date: form.end_date.value,
-            hours: parseFloat(form.hours.value) || 0
+            days: parseFloat(form.days.value) || 0,
+            hours: normalizeQuarterHours(parseFloat(form.hours.value) || 0),
+            auto_days: autoDays
         };
         try {
-            await API.post('/api/vacations', data);
-            showToast('Vacation added!', 'success');
+            if (state.editingVacationId) {
+                await API.put(`/api/vacations/${state.editingVacationId}`, data);
+                showToast('Vacation updated!', 'success');
+            } else {
+                await API.post('/api/vacations', data);
+                showToast('Vacation added!', 'success');
+            }
             closeVacationModal();
             loadVacations();
             loadDashboard();
             loadForecast();
+            renderCalendar();
         } catch (err) {
-            showToast('Failed to add vacation', 'error');
+            showToast('Failed to save vacation', 'error');
         }
     });
+
+    const refreshBtn = document.getElementById('btn-refresh-suggestions');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            try {
+                state.vacationSuggestions = await API.get(`/api/vacations/suggestions?year=${new Date().getFullYear()}`);
+                renderVacationSuggestions();
+                showToast('Suggestions refreshed', 'success');
+            } catch (err) {
+                console.error('Failed to refresh suggestions:', err);
+                showToast('Failed to refresh suggestions', 'error');
+            }
+        });
+    }
+
+    const suggestionsList = document.getElementById('suggestions-list');
+    if (suggestionsList) {
+        suggestionsList.addEventListener('click', async (e) => {
+            const button = e.target.closest('.suggestion-add');
+            if (!button || button.disabled) return;
+            const index = Number(button.dataset.index);
+            if (!Number.isFinite(index)) return;
+            await addSuggestedVacation(index);
+        });
+    }
 }
 
-function calcVacationDays() {
+function syncVacationDateBounds() {
+    const startInput = document.getElementById('vacation-start');
+    const endInput = document.getElementById('vacation-end');
+    const start = startInput.value;
+    if (!start) return;
+
+    // End date can never be earlier than selected start date.
+    endInput.min = start;
+    if (!endInput.value || endInput.value < start) {
+        endInput.value = start;
+    }
+}
+
+async function calcVacationDays() {
     const start = document.getElementById('vacation-start').value;
     const end = document.getElementById('vacation-end').value;
     if (!start || !end) return;
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+    const autoDays = document.getElementById('vacation-auto-days').checked;
+    const daysInput = document.getElementById('vacation-days');
+    const hoursInput = document.getElementById('vacation-hours');
+    hoursInput.value = normalizeQuarterHours(parseFloat(hoursInput.value) || 0);
+    const startDate = parseIsoDateToLocal(start);
+    const endDate = parseIsoDateToLocal(end);
     if (endDate < startDate) {
-        document.getElementById('vacation-days').value = 0;
+        daysInput.value = 0;
         document.getElementById('vacation-preview').classList.remove('active');
         return;
     }
     let days = 0;
-    const current = new Date(startDate);
-    while (current <= endDate) {
-        if (current.getDay() !== 0 && current.getDay() !== 6) {
-            days += 1;
+    if (autoDays) {
+        const requestId = ++state.vacationCalcRequestId;
+        try {
+            const result = await API.get(`/api/vacations/calculate-days?start_date=${start}&end_date=${end}`);
+            // Ignore stale responses if user changed dates while waiting.
+            if (requestId !== state.vacationCalcRequestId) return;
+            if (typeof result.days === 'number') {
+                days = result.days;
+            }
+        } catch (err) {
+            // Fallback to weekday-only client estimate if API call fails.
+            const current = new Date(startDate);
+            while (current <= endDate) {
+                if (current.getDay() !== 0 && current.getDay() !== 6) {
+                    days += 1;
+                }
+                current.setDate(current.getDate() + 1);
+            }
         }
-        current.setDate(current.getDate() + 1);
     }
-    document.getElementById('vacation-days').value = days;
+    daysInput.value = days;
+    daysInput.readOnly = true;
     const preview = document.getElementById('vacation-preview');
-    preview.textContent = `This trip will use ${days} PTO days`;
+    const hours = normalizeQuarterHours(parseFloat(hoursInput.value) || 0);
+    if (days > 0 && hours > 0) preview.textContent = `This entry will use ${days} PTO day(s) and ${hours} hour(s)`;
+    else if (days > 0) preview.textContent = `This entry will use ${days} PTO day(s)`;
+    else preview.textContent = `This entry will use ${hours} PTO hour(s)`;
     preview.classList.add('active');
+}
+
+function normalizeQuarterHours(hours) {
+    const safe = Number.isFinite(hours) ? Math.max(0, hours) : 0;
+    return Math.round(safe * 4) / 4;
 }
 
 function closeVacationModal() {
     document.getElementById('vacation-modal').classList.remove('active');
     document.getElementById('vacation-form').reset();
     document.getElementById('vacation-preview').classList.remove('active');
+    state.editingVacationId = null;
+    document.getElementById('vacation-modal-title').textContent = 'Add Vacation';
+    document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
 }
 
 function setupSettings() {
@@ -347,6 +624,7 @@ function setupSettings() {
             closeSettings();
             loadDashboard();
             loadForecast();
+            loadVacations();
         } catch (err) {
             showToast('Failed to save settings', 'error');
         }
@@ -366,6 +644,7 @@ async function openSettings() {
         document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
         document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
         document.getElementById('lose-limit').checked = config.pto_lose_above_limit !== false;
+        document.getElementById('holidays-require-pto').checked = config.pto_holidays_require_pto !== false;
         document.getElementById('settings-modal').classList.add('active');
     } catch (err) {
         showToast('Failed to load settings', 'error');
