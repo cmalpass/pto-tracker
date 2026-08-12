@@ -9,7 +9,10 @@ from flask import Flask, jsonify, request, render_template, g
 import holidays
 
 app = Flask(__name__)
-DATABASE = os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
+DATABASE = os.environ.get(
+    'PTO_DB_PATH',
+    os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
+)
 
 
 def get_db():
@@ -844,6 +847,150 @@ def api_get_stats():
 
 with app.app_context():
     init_db()
+
+from csv import writer as csv_writer
+from io import BytesIO, StringIO
+from flask import send_file
+from openpyxl import Workbook
+
+
+def _validate_note_payload(data):
+    data = data or {}
+    note_date = data.get('date')
+    text = str(data.get('text', '')).strip()
+    if not note_date or not text:
+        return None, 'date and text are required'
+    try:
+        datetime.strptime(note_date, '%Y-%m-%d')
+    except ValueError:
+        return None, 'date must use yyyy-mm-dd format'
+    return {'date': note_date, 'text': text}, None
+
+
+@app.route('/api/notes', methods=['GET'])
+def api_get_notes():
+    db = get_db()
+    note_date = request.args.get('date')
+    if note_date:
+        rows = db.execute(
+            'SELECT * FROM notes WHERE date = ? ORDER BY date DESC, id DESC',
+            (note_date,)
+        ).fetchall()
+    else:
+        rows = db.execute('SELECT * FROM notes ORDER BY date DESC, id DESC').fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route('/api/notes', methods=['POST'])
+def api_add_note():
+    payload, error = _validate_note_payload(request.get_json())
+    if error:
+        return jsonify({'error': error}), 400
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO notes (date, text) VALUES (?, ?)',
+        (payload['date'], payload['text'])
+    )
+    db.commit()
+    row = db.execute('SELECT * FROM notes WHERE id = ?', (cursor.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.route('/api/notes/<int:note_id>', methods=['PUT'])
+def api_update_note(note_id):
+    db = get_db()
+    existing = db.execute('SELECT * FROM notes WHERE id = ?', (note_id,)).fetchone()
+    if not existing:
+        return jsonify({'error': 'Note not found'}), 404
+    data = request.get_json() or {}
+    payload, error = _validate_note_payload({
+        'date': data.get('date', existing['date']),
+        'text': data.get('text', existing['text'])
+    })
+    if error:
+        return jsonify({'error': error}), 400
+    db.execute(
+        'UPDATE notes SET date = ?, text = ? WHERE id = ?',
+        (payload['date'], payload['text'], note_id)
+    )
+    db.commit()
+    row = db.execute('SELECT * FROM notes WHERE id = ?', (note_id,)).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route('/api/notes/<int:note_id>', methods=['DELETE'])
+def api_delete_note(note_id):
+    db = get_db()
+    db.execute('DELETE FROM notes WHERE id = ?', (note_id,))
+    db.commit()
+    return jsonify({'status': 'deleted'})
+
+
+def _export_rows():
+    db = get_db()
+    config = get_config()
+    year = datetime.now().year
+    today = datetime.now().date().strftime('%Y-%m-%d')
+    return config, calculate_balance_on_date(today, config), db.execute(
+        'SELECT name, start_date, end_date, days, hours FROM vacations ORDER BY start_date'
+    ).fetchall(), generate_yearly_forecast(year, config), year
+
+
+@app.route('/api/export/excel', methods=['GET'])
+def api_export_excel():
+    config, balance, vacations, forecast, year = _export_rows()
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = 'Balance Summary'
+    summary.append(['Metric', 'Value'])
+    summary.append(['Current Balance', balance['balance']])
+    summary.append(['Accrued YTD', balance['accrued']])
+    summary.append(['Used YTD', balance['used']])
+    summary.append(['Carryover from prior year', balance['carry']])
+
+    schedule = workbook.create_sheet('Vacation Schedule')
+    schedule.append(['Name', 'Start', 'End', 'Days', 'Hours'])
+    for vacation in vacations:
+        schedule.append(list(vacation))
+
+    forecast_sheet = workbook.create_sheet('Monthly Forecast')
+    forecast_sheet.append(['Month', 'Accrued', 'Used', 'Balance'])
+    for month in forecast:
+        forecast_sheet.append([
+            month['month_name'], month['accrued'], month['used'], month['balance']
+        ])
+
+    config_sheet = workbook.create_sheet('Configuration')
+    config_sheet.append(['Setting', 'Value'])
+    for key, value in sorted(config.items()):
+        config_sheet.append([key, value])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'pto-export-{year}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@app.route('/api/export/csv', methods=['GET'])
+def api_export_csv():
+    _, _, vacations, _, year = _export_rows()
+    output = StringIO()
+    csv = csv_writer(output)
+    csv.writerow(['Name', 'Start', 'End', 'Days', 'Hours'])
+    csv.writerows(vacations)
+    response = send_file(
+        BytesIO(output.getvalue().encode('utf-8')),
+        as_attachment=True,
+        download_name=f'pto-vacations-{year}.csv',
+        mimetype='text/csv'
+    )
+    return response
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

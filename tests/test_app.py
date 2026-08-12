@@ -2,11 +2,13 @@
 import asyncio
 import sys
 import os
+from datetime import date
 from playwright.async_api import async_playwright, Page
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-BASE_URL = "http://localhost:5000"
+BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
+TEST_YEAR = date.today().year
 
 
 async def test_dashboard_loads():
@@ -51,8 +53,8 @@ async def test_add_vacation():
         """)
         await page.wait_for_timeout(500)
         await page.fill("input[name='name']", "Test Vacation")
-        await page.fill("input[name='start_date']", "2026-08-01")
-        await page.fill("input[name='end_date']", "2026-08-05")
+        await page.fill("input[name='start_date']", f"{TEST_YEAR}-08-01")
+        await page.fill("input[name='end_date']", f"{TEST_YEAR}-08-05")
         await page.wait_for_timeout(500)
         await page.evaluate("document.querySelector('#vacation-form').requestSubmit()")
         await page.wait_for_timeout(1000)
@@ -71,7 +73,7 @@ async def test_calendar_shows_holidays():
         await page.goto(BASE_URL)
         await page.click("button:has-text('Calendar')")
         await page.wait_for_timeout(500)
-        assert await page.locator(".cal-grid").is_visible()
+        assert await page.locator(".calendar-grid").is_visible()
         await page.click("button:has-text('<')")
         await page.wait_for_timeout(300)
         await page.click("button:has-text('<')")
@@ -166,8 +168,8 @@ async def test_delete_vacation():
         await page.wait_for_timeout(500)
         unique_name = f"DeleteMe_{id(browser)}"
         await page.fill("input[name='name']", unique_name)
-        await page.fill("input[name='start_date']", "2026-10-01")
-        await page.fill("input[name='end_date']", "2026-10-03")
+        await page.fill("input[name='start_date']", f"{TEST_YEAR}-10-01")
+        await page.fill("input[name='end_date']", f"{TEST_YEAR}-10-03")
         await page.wait_for_timeout(500)
         await page.evaluate("document.querySelector('#vacation-form').requestSubmit()")
         await page.wait_for_timeout(1500)
@@ -212,6 +214,60 @@ async def main():
     return failed == 0
 
 
+async def reset_database(request_context):
+    """Remove test records and restore defaults before each browser test."""
+    vacations_response = await request_context.get('/api/vacations')
+    for vacation in await vacations_response.json():
+        await request_context.delete(f"/api/vacations/{vacation['id']}")
+    notes_response = await request_context.get('/api/notes')
+    for note in await notes_response.json():
+        await request_context.delete(f"/api/notes/{note['id']}")
+    await request_context.put('/api/config', data={
+        'pto_accrual_per_pay_period': 1.0,
+        'pto_accrual_type': 'days',
+        'pto_hours_per_day': 8,
+        'pto_holidays_require_pto': True,
+        'pay_periods_per_year': 26,
+        'accrual_method': 'pro-rata',
+        'pto_carryover_limit': 40,
+        'pto_uses_rollover': True,
+        'pto_lose_above_limit': True,
+    })
+
+
+async def run_isolated_tests():
+    """Run each integration test against a clean database state."""
+    tests = [
+        test_dashboard_loads,
+        test_add_vacation,
+        test_calendar_shows_holidays,
+        test_forecast_table,
+        test_settings_save,
+        test_chart_rendering,
+        test_delete_vacation,
+    ]
+    passed = 0
+    failed = 0
+    async with async_playwright() as p:
+        request_context = await p.request.new_context(base_url=BASE_URL)
+        try:
+            for test in tests:
+                await reset_database(request_context)
+                try:
+                    await test()
+                    passed += 1
+                except Exception as e:
+                    print(f"❌ {test.__name__} failed: {e}")
+                    failed += 1
+            await reset_database(request_context)
+        finally:
+            await request_context.dispose()
+    print(f"\n{'='*50}")
+    print(f"Results: {passed} passed, {failed} failed")
+    print(f"{'='*50}")
+    return failed == 0
+
+
 if __name__ == "__main__":
-    result = asyncio.run(main())
+    result = asyncio.run(run_isolated_tests())
     sys.exit(0 if result else 1)
