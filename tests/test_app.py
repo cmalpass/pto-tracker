@@ -129,6 +129,30 @@ async def test_settings_save():
         await browser.close()
 
 
+async def test_holiday_country_configuration(request_context):
+    """Verify country-specific holidays and invalid-country validation."""
+    config_response = await request_context.get('/api/config')
+    config = await config_response.json()
+    assert config['holiday_country'] == 'US'
+
+    invalid = await request_context.put('/api/config', data={'holiday_country': 'ZZ'})
+    assert invalid.status == 400
+
+    updated = await request_context.put('/api/config', data={'holiday_country': 'GB'})
+    assert updated.status == 200
+    assert (await updated.json())['config']['holiday_country'] == 'GB'
+
+    calendar = await request_context.get(f'/api/calendar/{TEST_YEAR}')
+    events = await calendar.json()
+    holiday_names = {event['name'] for event in events['events'] if event['type'] == 'holiday'}
+    assert 'Good Friday' in holiday_names
+
+    restored = await request_context.put('/api/config', data={'holiday_country': 'US'})
+    assert restored.status == 200
+    await request_context.put('/api/config', data={'holiday_country': 'not-a-country'})
+    assert (await (await request_context.get('/api/config')).json())['holiday_country'] == 'US'
+
+
 async def test_chart_rendering():
     """Verify forecast chart displays data."""
     async with async_playwright() as p:
@@ -256,6 +280,7 @@ async def reset_database(request_context):
     for note in await notes_response.json():
         await request_context.delete(f"/api/notes/{note['id']}")
     await request_context.put('/api/config', data={
+        'holiday_country': 'US',
         'pto_accrual_per_pay_period': 1.0,
         'pto_accrual_type': 'days',
         'pto_hours_per_day': 8,
@@ -276,6 +301,7 @@ async def run_isolated_tests():
         test_calendar_shows_holidays,
         test_forecast_table,
         test_settings_save,
+        test_holiday_country_configuration,
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
@@ -288,7 +314,7 @@ async def run_isolated_tests():
             for test in tests:
                 await reset_database(request_context)
                 try:
-                    if test is test_export_and_note_validation:
+                    if test in {test_export_and_note_validation, test_holiday_country_configuration}:
                         await test(request_context)
                     else:
                         await test()

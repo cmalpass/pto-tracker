@@ -715,6 +715,7 @@ async function openSettings() {
     try {
         const config = await API.get('/api/config');
         state.config = config;
+        document.getElementById('holiday-country').value = config.holiday_country || 'US';
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
         document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;

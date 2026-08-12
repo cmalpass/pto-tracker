@@ -31,6 +31,7 @@ BOOLEAN_CONFIG_KEYS = {
     'pto_lose_above_limit',
 }
 VALID_CONFIG_KEYS = {
+    'holiday_country',
     'pto_accrual_per_pay_period',
     'pto_accrual_type',
     'pto_hours_per_day',
@@ -47,9 +48,12 @@ VALID_CONFIG_KEYS = {
     'pto_grace_period_days',
 }
 
+DEFAULT_HOLIDAY_COUNTRY = 'US'
+
 
 def default_config():
     return {
+        'holiday_country': DEFAULT_HOLIDAY_COUNTRY,
         'pto_accrual_per_pay_period': '1.0',
         'pto_accrual_type': 'days',
         'pto_hours_per_day': '8',
@@ -134,6 +138,9 @@ def get_config():
             config[key] = value.lower() == 'true'
         else:
             config[key] = value
+    config['holiday_country'] = normalize_holiday_country(
+        config.get('holiday_country')
+    )
     return config
 
 
@@ -179,8 +186,34 @@ def set_security_headers(response):
     return response
 
 
-def get_us_holidays(year):
-    return holidays.US(years=year, observed=True)
+def normalize_holiday_country(value):
+    """Return a supported ISO country code, falling back to the US."""
+    if not isinstance(value, str):
+        return DEFAULT_HOLIDAY_COUNTRY
+    country = value.strip().upper()
+    if country not in holidays.list_supported_countries():
+        return DEFAULT_HOLIDAY_COUNTRY
+    return country
+
+
+def validate_holiday_country(value):
+    """Validate a user-supplied country code without contacting external services."""
+    if not isinstance(value, str):
+        return None
+    country = value.strip().upper()
+    if country not in holidays.list_supported_countries():
+        return None
+    return country
+
+
+def get_holidays(year, config):
+    """Return observed holidays for the configured country using the local library."""
+    country = normalize_holiday_country(config.get('holiday_country'))
+    try:
+        return holidays.country_holidays(country, years=year, observed=True)
+    except (KeyError, NotImplementedError, TypeError, ValueError):
+        logger.warning('Unable to load holidays for %s; using %s', country, DEFAULT_HOLIDAY_COUNTRY)
+        return holidays.country_holidays(DEFAULT_HOLIDAY_COUNTRY, years=year, observed=True)
 
 
 def is_business_day(date):
@@ -194,7 +227,7 @@ def get_vacation_days(start_date, end_date, config):
     holidays_set = set()
     if not holidays_require_pto:
         for year in range(start.year, end.year + 1):
-            holidays_set.update(get_us_holidays(year))
+            holidays_set.update(get_holidays(year, config))
     days = 0
     current = start
     while current <= end:
@@ -234,7 +267,7 @@ def calculate_accrual_to_date(target_date, config):
     if config['accrual_method'] == 'pro-rata':
         holidays_set = set()
         for y in range(accrual_start.year, target.year + 1):
-            holidays_set.update(get_us_holidays(y))
+            holidays_set.update(get_holidays(y, config))
         business_days_worked = _count_business_days(accrual_start, target, holidays_set)
         accrual_per_day = config['pto_accrual_per_pay_period'] / (pay_period_days * 5 / 7)
         accrued = business_days_worked * accrual_per_day
@@ -398,8 +431,8 @@ def generate_yearly_forecast(year, config):
 
 def generate_calendar_events(year, config):
     events = []
-    us_holidays = get_us_holidays(year)
-    for holiday_date, name in sorted(us_holidays.items()):
+    holiday_map = get_holidays(year, config)
+    for holiday_date, name in sorted(holiday_map.items()):
         events.append({
             'date': holiday_date.strftime('%Y-%m-%d'),
             'type': 'holiday',
@@ -609,7 +642,7 @@ def generate_vacation_suggestions(year, config):
     budget_days = max(0, int(math.floor(target_days + 1e-9)))
 
     reserved_dates = _build_reserved_dates(year, vacations)
-    holidays_map = get_us_holidays(year)
+    holidays_map = get_holidays(year, config)
     holidays_set = set(holidays_map.keys())
 
     candidates = []
@@ -783,7 +816,12 @@ def api_update_config():
     for key, value in data.items():
         if key not in VALID_CONFIG_KEYS:
             return jsonify({'error': f'Invalid config key: {key}'}), 400
-        if key in NUMERIC_CONFIG_KEYS:
+        if key == 'holiday_country':
+            country = validate_holiday_country(value)
+            if country is None:
+                return jsonify({'error': 'holiday_country must be a supported ISO country code'}), 400
+            validated[key] = country
+        elif key in NUMERIC_CONFIG_KEYS:
             if isinstance(value, bool):
                 return jsonify({'error': f'{key} must be numeric'}), 400
             try:
@@ -979,8 +1017,8 @@ def api_get_calendar(year):
 def api_get_month_calendar(year, month):
     config = get_config()
     events = []
-    us_holidays = get_us_holidays(year)
-    for date, name in us_holidays.items():
+    holiday_map = get_holidays(year, config)
+    for date, name in holiday_map.items():
         if date.month == month:
             events.append({
                 'date': date.strftime('%Y-%m-%d'),
