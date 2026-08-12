@@ -597,6 +597,106 @@ body {
     color: var(--text-muted);
 }
 
+.explanation-panel {
+    margin-top: 0.8rem;
+    padding: 0.85rem;
+    border-left: 3px solid var(--primary);
+    background: rgba(99, 102, 241, 0.05);
+    border-radius: var(--radius-sm);
+}
+
+.explanation-panel h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.65rem;
+}
+
+.day-breakdown-bar {
+    display: flex;
+    min-height: 1.35rem;
+    overflow: hidden;
+    border-radius: var(--radius-full);
+    background: var(--border);
+}
+
+.day-segment {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5rem;
+    color: white;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.day-segment.pto { background: var(--primary); }
+.day-segment.weekend { background: var(--text-muted); }
+.day-segment.holiday { background: var(--danger); }
+.day-segment.other { background: var(--warning); }
+
+.day-breakdown-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.3rem;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+.explanation-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem 1rem;
+    margin-top: 0.8rem;
+    font-size: 0.78rem;
+}
+
+.explanation-grid div {
+    display: flex;
+    flex-direction: column;
+}
+
+.explanation-grid span,
+.constraint-list,
+.score-formula {
+    color: var(--text-muted);
+}
+
+.score-formula,
+.constraint-list {
+    margin-top: 0.7rem;
+    font-size: 0.78rem;
+}
+
+.alternatives {
+    display: grid;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    font-size: 0.78rem;
+}
+
+.alternative-card {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.alternative-card span,
+.alternative-card small {
+    color: var(--text-muted);
+}
+
+.why-button {
+    border: none;
+    background: none;
+    color: var(--primary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
 .suggestion-actions {
     display: flex;
     flex-direction: column;

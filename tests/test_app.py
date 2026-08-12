@@ -220,6 +220,51 @@ async def test_export_and_note_validation(request_context):
     assert workbook['Vacation Schedule']['A2'].value.startswith("'=")
 
 
+async def test_suggestion_explainability(request_context):
+    """Verify suggestions expose explainability details and the UI can expand them."""
+    response = await request_context.get(f'/api/vacations/suggestions?year={TEST_YEAR}')
+    assert response.status == 200
+    payload = await response.json()
+    assert payload['suggestions'], "Suggestions should be available for explainability coverage"
+    suggestion = payload['suggestions'][0]
+    explanation = suggestion['explanation']
+    breakdown = explanation['breakdown']
+    assert sum(
+        breakdown[key] for key in (
+            'weekday_pto_days',
+            'weekend_days',
+            'holiday_days',
+            'non_pto_weekday_days',
+        )
+    ) == (
+        (date.fromisoformat(suggestion['end_date'])
+         - date.fromisoformat(suggestion['start_date'])).days + 1
+    )
+    assert explanation['score_formula']
+    assert 'policy_assumptions' in explanation
+    assert 'constraints' in explanation
+    assert 'ranking_factors' in explanation
+
+    page = await request_context.get('/')
+    assert page.status == 200
+
+
+async def test_suggestion_explainability_ui():
+    """Verify a suggestion's Why? panel is rendered and expandable."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        await page.click("button:has-text('Vacations')")
+        await page.wait_for_selector(".suggestion-item", timeout=10000)
+        await page.locator(".why-button").first.click()
+        panel = page.locator(".explanation-panel").first
+        assert await panel.is_visible()
+        assert await panel.locator(".day-breakdown-bar").is_visible()
+        assert await panel.locator("text=Constraints:").is_visible()
+        await browser.close()
+
+
 async def main():
     """Run all tests."""
     tests = [
@@ -231,6 +276,8 @@ async def main():
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_suggestion_explainability,
+        test_suggestion_explainability_ui,
     ]
     passed = 0
     failed = 0
@@ -279,6 +326,8 @@ async def run_isolated_tests():
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_suggestion_explainability,
+        test_suggestion_explainability_ui,
     ]
     passed = 0
     failed = 0
@@ -288,7 +337,7 @@ async def run_isolated_tests():
             for test in tests:
                 await reset_database(request_context)
                 try:
-                    if test is test_export_and_note_validation:
+                    if test in (test_export_and_note_validation, test_suggestion_explainability):
                         await test(request_context)
                     else:
                         await test()

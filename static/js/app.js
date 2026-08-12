@@ -391,14 +391,67 @@ function renderVacationSuggestions() {
                     <div class="suggestion-dates">${dateStr}</div>
                     <div class="suggestion-reason">${escapeHtml(s.reason || '')}</div>
                     <div class="suggestion-metrics">${ptoLabel} • ${offLabel} • impact ${Number(s.impact_score || 0).toFixed(2)}x</div>
+                    ${renderSuggestionExplanation(s, idx)}
                 </div>
                 <div class="suggestion-actions">
                     <span class="suggestion-tag">${escapeHtml((s.category || 'high-impact').replace('-', ' '))}</span>
+                    <button class="why-button" type="button" data-index="${idx}" aria-expanded="false">Why?</button>
                     <button class="btn btn-primary btn-sm suggestion-add" data-index="${idx}" ${alreadyPlanned ? 'disabled' : ''}>${alreadyPlanned ? 'Added' : 'Add to Plan'}</button>
                 </div>
             </div>
         `;
     }).join('');
+}
+
+function renderSuggestionExplanation(suggestion, index) {
+   const explanation = suggestion.explanation;
+   if (!explanation) return '';
+   const breakdown = explanation.breakdown || {};
+   const policy = explanation.policy_assumptions || {};
+   const holidays = explanation.holidays_avoided || {};
+   const balance = explanation.balance_impact || {};
+   const factors = explanation.ranking_factors || {};
+   const alternatives = explanation.alternatives || [];
+   const segment = (label, value, className) => {
+       const numericValue = Number(value || 0);
+       return numericValue ? `<span class="day-segment ${className}" style="flex:${numericValue}" title="${label}: ${numericValue}">${numericValue}</span>` : '';
+   };
+   const alternativeMarkup = alternatives.map(alt => `
+       <div class="alternative-card">
+           <strong>${escapeHtml(alt.name || 'Nearby alternative')}</strong>
+           <span>${escapeHtml(alt.start_date)} - ${escapeHtml(alt.end_date)}</span>
+           <span>${Number(alt.pto_days || 0)} PTO days • ${Number(alt.total_days_off || 0)} days off</span>
+           <small>${escapeHtml(alt.comparison || '')}</small>
+       </div>
+   `).join('');
+   return `
+       <div class="explanation-panel" id="suggestion-explanation-${index}" hidden>
+           <h3>Why this suggestion?</h3>
+           <div class="day-breakdown">
+               <div class="day-breakdown-bar">
+                   ${segment('PTO weekdays', breakdown.weekday_pto_days, 'pto')}
+                   ${segment('Weekends', breakdown.weekend_days, 'weekend')}
+                   ${segment('Holidays', breakdown.holiday_days, 'holiday')}
+                   ${segment('Other weekdays', breakdown.non_pto_weekday_days, 'other')}
+               </div>
+               <div class="day-breakdown-labels">
+                   <span>${breakdown.weekday_pto_days || 0} PTO</span>
+                   <span>${breakdown.weekend_days || 0} weekend</span>
+                   <span>${breakdown.holiday_days || 0} holiday</span>
+                   <span>${breakdown.free_days_total || 0} total off</span>
+               </div>
+           </div>
+           <div class="explanation-grid">
+               <div><strong>Holidays avoided</strong><span>${holidays.count || 0}${holidays.names?.length ? `: ${escapeHtml(holidays.names.join(', '))}` : ''}</span></div>
+               <div><strong>Balance impact</strong><span>${Number(balance.amount || 0).toFixed(2)} ${escapeHtml(balance.unit || 'days')} (${balance.days_equivalent || 0} days)</span></div>
+               <div><strong>Ranking</strong><span>#${factors.rank || '-'} • ${Number(factors.impact_score || 0).toFixed(2)}x impact${factors.holiday_alignment ? ' • holiday aligned' : ''}</span></div>
+               <div><strong>Policy</strong><span>${policy.holidays_require_pto ? 'Holidays use PTO' : 'Holidays do not use PTO'} • ${escapeHtml(policy.accrual_type || 'days')} • ${policy.hours_per_day || 8} hours/day</span></div>
+           </div>
+           <div class="score-formula">${escapeHtml(explanation.score_formula || '')}</div>
+           <div class="constraint-list"><strong>Constraints:</strong> ${(explanation.constraints || []).map(item => escapeHtml(item)).join(' • ')}</div>
+           ${alternativeMarkup ? `<div class="alternatives"><strong>Nearby alternatives</strong>${alternativeMarkup}</div>` : ''}
+       </div>
+   `;
 }
 
 async function addSuggestedVacation(index) {
@@ -600,6 +653,16 @@ function setupVacationModal() {
     const suggestionsList = document.getElementById('suggestions-list');
     if (suggestionsList) {
         suggestionsList.addEventListener('click', async (e) => {
+            const whyButton = e.target.closest('.why-button');
+            if (whyButton) {
+                const panel = document.getElementById(`suggestion-explanation-${whyButton.dataset.index}`);
+                if (!panel) return;
+                const expanded = !panel.hidden;
+                panel.hidden = expanded;
+                whyButton.setAttribute('aria-expanded', String(!expanded));
+                whyButton.textContent = expanded ? 'Why?' : 'Hide why';
+                return;
+            }
             const button = e.target.closest('.suggestion-add');
             if (!button || button.disabled) return;
             const index = Number(button.dataset.index);
