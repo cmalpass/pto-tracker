@@ -11,6 +11,9 @@ class CsrfTestCase(unittest.TestCase):
         self.database.close()
         os.environ['PTO_DB_PATH'] = self.database.name
         os.environ.pop('PTO_REQUIRE_AUTH', None)
+        os.environ.pop('PTO_API_KEY', None)
+        os.environ.pop('PTO_AUTH_USERNAME', None)
+        os.environ.pop('PTO_AUTH_PASSWORD', None)
         from app import app, init_db
         self.app = app
         self.app.config.update(TESTING=True)
@@ -24,6 +27,9 @@ class CsrfTestCase(unittest.TestCase):
         os.unlink(self.database.name)
         os.environ.pop('PTO_DB_PATH', None)
         os.environ.pop('PTO_REQUIRE_AUTH', None)
+        os.environ.pop('PTO_API_KEY', None)
+        os.environ.pop('PTO_AUTH_USERNAME', None)
+        os.environ.pop('PTO_AUTH_PASSWORD', None)
 
     def csrf_cookie_and_token(self):
         response = self.client.get('/')
@@ -59,10 +65,20 @@ class CsrfTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
-    def test_cookie_less_api_client_remains_compatible(self):
+    def test_cookie_less_browser_write_is_rejected(self):
         response = self.client.post(
             '/api/notes',
             json={'date': '2026-01-01', 'text': 'API client'},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json, {'error': 'CSRF validation failed'})
+
+    def test_cookie_less_api_client_requires_valid_api_key(self):
+        os.environ['PTO_API_KEY'] = 'local-api-key'
+        response = self.client.post(
+            '/api/notes',
+            json={'date': '2026-01-01', 'text': 'API client'},
+            headers={'Authorization': 'Bearer local-api-key'},
         )
         self.assertEqual(response.status_code, 201)
 
@@ -79,6 +95,21 @@ class CsrfTestCase(unittest.TestCase):
             headers={
                 'Cookie': cookie,
                 'X-CSRF-Token': token,
+                'Authorization': 'Basic ' + base64.b64encode(b'user:pass').decode(),
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+
+    def test_valid_basic_auth_allows_cookie_less_api_request(self):
+        os.environ.update({
+            'PTO_REQUIRE_AUTH': 'true',
+            'PTO_AUTH_USERNAME': 'user',
+            'PTO_AUTH_PASSWORD': 'pass',
+        })
+        response = self.client.post(
+            '/api/notes',
+            json={'date': '2026-01-01', 'text': 'Basic API client'},
+            headers={
                 'Authorization': 'Basic ' + base64.b64encode(b'user:pass').decode(),
             },
         )
