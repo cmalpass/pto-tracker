@@ -4,7 +4,7 @@ import sys
 import os
 import json
 from io import BytesIO
-from datetime import date
+from datetime import date, timedelta
 from openpyxl import load_workbook
 from playwright.async_api import async_playwright, Page
 
@@ -12,6 +12,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 TEST_YEAR = date.today().year
+
+
+async def csrf_headers(request_context):
+    """Return a CSRF header after establishing the browser token cookie."""
+    await request_context.get('/')
+    storage = await request_context.storage_state()
+    token = next(
+        cookie['value'] for cookie in storage['cookies']
+        if cookie['name'] == 'pto_csrf_token'
+    )
+    return {'X-CSRF-Token': token}
 
 
 async def test_dashboard_loads():
@@ -30,6 +41,8 @@ async def test_dashboard_loads():
         assert await page.locator("text=Accrued YTD").is_visible()
         assert await page.locator("text=Used YTD").is_visible()
         assert await page.locator("text=Upcoming Trips").is_visible()
+        assert await page.locator("text=Scheduled PTO Remaining").is_visible()
+        assert await page.locator("#stat-scheduled-pto").is_visible()
         assert await page.locator("text=Days Left in Year").is_visible()
         print("✅ test_dashboard_loads passed")
         await browser.close()
@@ -193,18 +206,19 @@ async def test_delete_vacation():
 
 async def test_export_and_note_validation(request_context):
     """Verify exports neutralize formulas and malformed note dates return 400."""
-    malformed = await request_context.post('/api/notes', data={
+    headers = await csrf_headers(request_context)
+    malformed = await request_context.post('/api/notes', headers=headers, data={
         'date': 123,
         'text': 'Malformed date'
     })
     assert malformed.status == 400
-    non_canonical = await request_context.post('/api/notes', data={
+    non_canonical = await request_context.post('/api/notes', headers=headers, data={
         'date': '2026-1-1',
         'text': 'Non-canonical date'
     })
     assert non_canonical.status == 400
 
-    vacation = await request_context.post('/api/vacations', data={
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
         'name': '=HYPERLINK("https://example.com","Injected")',
         'start_date': f'{TEST_YEAR}-11-02',
         'end_date': f'{TEST_YEAR}-11-02',
@@ -232,7 +246,8 @@ async def test_smart_warnings_and_suggestion_filters(request_context=None):
             finally:
                 await request_context.dispose()
         return
-    first = await request_context.post('/api/vacations', data={
+    headers = await csrf_headers(request_context)
+    first = await request_context.post('/api/vacations', headers=headers, data={
         'name': 'Existing trip',
         'start_date': f'{TEST_YEAR}-09-14',
         'end_date': f'{TEST_YEAR}-09-16',
@@ -248,7 +263,7 @@ async def test_smart_warnings_and_suggestion_filters(request_context=None):
             'days': 3,
             'hours': 0,
         }),
-        headers={'Content-Type': 'application/json'})
+        headers={**headers, 'Content-Type': 'application/json'})
     assert analysis.status == 200
     analysis_data = await analysis.json()
     assert any(warning['type'] == 'overlap' for warning in analysis_data['warnings'])
@@ -276,6 +291,28 @@ async def test_vacation_warning_controls_render():
         await page.locator("#btn-toggle-suggestion-filters").click()
         assert await page.locator("#suggestion-filter-controls").is_visible()
         await browser.close()
+
+
+async def test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days(request_context):
+    """Verify stats keep the entry count while exposing scheduled PTO days."""
+    start_date = date.today() + timedelta(days=7)
+    while start_date.weekday() != 0:
+        start_date += timedelta(days=1)
+    end_date = start_date + timedelta(days=4)
+    vacation = await request_context.post('/api/vacations', headers=await csrf_headers(request_context), data={
+        'name': 'Stats Regression',
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+        'auto_days': True
+    })
+    assert vacation.status == 201
+
+    stats_response = await request_context.get('/api/stats')
+    assert stats_response.status == 200
+    stats = await stats_response.json()
+    assert stats['upcoming_vacations'] == 1
+    assert stats['remaining_scheduled_pto_days'] == stats['remaining_vacation_days']
+    assert stats['remaining_scheduled_pto_days'] == 5
 
 
 async def main():
@@ -309,13 +346,14 @@ async def main():
 
 async def reset_database(request_context):
     """Remove test records and restore defaults before each browser test."""
+    headers = await csrf_headers(request_context)
     vacations_response = await request_context.get('/api/vacations')
     for vacation in await vacations_response.json():
-        await request_context.delete(f"/api/vacations/{vacation['id']}")
+        await request_context.delete(f"/api/vacations/{vacation['id']}", headers=headers)
     notes_response = await request_context.get('/api/notes')
     for note in await notes_response.json():
-        await request_context.delete(f"/api/notes/{note['id']}")
-    await request_context.put('/api/config', data={
+        await request_context.delete(f"/api/notes/{note['id']}", headers=headers)
+    await request_context.put('/api/config', headers=headers, data={
         'pto_accrual_per_pay_period': 1.0,
         'pto_accrual_type': 'days',
         'pto_hours_per_day': 8,
@@ -341,6 +379,7 @@ async def run_isolated_tests():
         test_export_and_note_validation,
         test_smart_warnings_and_suggestion_filters,
         test_vacation_warning_controls_render,
+        test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
     ]
     passed = 0
     failed = 0
@@ -350,7 +389,11 @@ async def run_isolated_tests():
             for test in tests:
                 await reset_database(request_context)
                 try:
-                    if test in (test_export_and_note_validation, test_smart_warnings_and_suggestion_filters):
+                    if test in {
+                        test_export_and_note_validation,
+                        test_smart_warnings_and_suggestion_filters,
+                        test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
+                    }:
                         await test(request_context)
                     else:
                         await test()

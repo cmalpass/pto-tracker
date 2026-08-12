@@ -4,6 +4,10 @@ const API = {
     async request(path, options = {}, allowAuthPrompt = true) {
         const headers = { ...(options.headers || {}) };
         if (this.authHeader) headers.Authorization = this.authHeader;
+        if (options.method && !['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase())) {
+            const csrfCookie = document.cookie.split('; ').find(cookie => cookie.startsWith('pto_csrf_token='));
+            if (csrfCookie) headers['X-CSRF-Token'] = decodeURIComponent(csrfCookie.split('=').slice(1).join('='));
+        }
         const res = await fetch(path, { ...options, headers });
         if (res.status === 401 && options.method && allowAuthPrompt) {
             const username = window.prompt('PTO Tracker username:');
@@ -223,6 +227,8 @@ async function loadDashboard() {
         document.getElementById('stat-accrued-ytd').textContent = ytdAccrued.toFixed(1);
         document.getElementById('stat-used-ytd').textContent = stats.current_balance?.used?.toFixed(1) || '0.0';
         document.getElementById('stat-upcoming').textContent = stats.upcoming_vacations || 0;
+        const scheduledPtoDays = stats.remaining_scheduled_pto_days ?? stats.remaining_vacation_days ?? 0;
+        document.getElementById('stat-scheduled-pto').textContent = Number(scheduledPtoDays).toFixed(1);
         document.getElementById('stat-remaining-days').textContent = daysRemainingThisYear();
         document.getElementById('accrual-per-period').textContent = `${config.pto_accrual_per_pay_period} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
         document.getElementById('pay-periods').textContent = config.pay_periods_per_year;
@@ -979,5 +985,9 @@ function showToast(message, type = '') {
 
 function showWarningToast(warnings = []) {
     const warning = warnings.find(item => item.severity === 'error' || item.severity === 'warning');
-    if (warning) showToast(warning.message, warning.severity === 'error' ? 'error' : 'warning');
+    if (warning) {
+        setTimeout(() => {
+            showToast(warning.message, warning.severity === 'error' ? 'error' : 'warning');
+        }, 3200);
+    }
 }
