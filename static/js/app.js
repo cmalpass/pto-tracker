@@ -77,7 +77,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupVacationList();
     setupCalendar();
     loadDashboard();
-    loadForecast();
 });
 
 function setupTabs() {
@@ -117,6 +116,7 @@ async function loadDashboard() {
         state.today = config.current_date;
         state.currentYear = config.current_year;
         state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
+        loadForecast();
         const now = parseIsoDateToLocal(state.today);
         const [balance, stats] = await Promise.all([
             API.get(`/api/balance/${config.current_date}`),
@@ -158,10 +158,10 @@ function currentDaysUsed() {
     return getTodayDate().getMonth();
 }
 
-function daysRemainingThisYear() {
-    const now = getTodayDate();
-    const end = new Date(now.getFullYear(), 11, 31);
-    return Math.ceil((end - now) / 86400000);
+function daysRemainingThisYear(today = getTodayDate()) {
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const yearEndUtc = Date.UTC(today.getFullYear(), 11, 31);
+    return Math.round((yearEndUtc - todayUtc) / 86400000);
 }
 
 function renderMiniCalendar() {

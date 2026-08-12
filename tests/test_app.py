@@ -160,6 +160,19 @@ async def test_chart_rendering():
         await browser.close()
 
 
+async def test_days_remaining_ignores_dst():
+    """Verify date-only year arithmetic is stable across a DST transition."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        remaining = await page.evaluate(
+            "() => daysRemainingThisYear(new Date(2026, 2, 8))"
+        )
+        assert remaining == 298
+        await browser.close()
+
+
 async def test_delete_vacation():
     """Verify vacation deletion works end-to-end."""
     async with async_playwright() as p:
@@ -265,6 +278,7 @@ async def main():
         test_forecast_table,
         test_settings_save,
         test_chart_rendering,
+        test_days_remaining_ignores_dst,
         test_delete_vacation,
         test_export_and_note_validation,
     ]
@@ -314,6 +328,7 @@ async def run_isolated_tests():
         test_forecast_table,
         test_settings_save,
         test_chart_rendering,
+        test_days_remaining_ignores_dst,
         test_delete_vacation,
         test_export_and_note_validation,
         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
