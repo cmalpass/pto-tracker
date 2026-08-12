@@ -5,12 +5,16 @@ import sqlite3
 import math
 import calendar
 import hmac
+import secrets
 import logging
 from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
 app = Flask(__name__)
+CSRF_COOKIE_NAME = 'pto_csrf_token'
+CSRF_HEADER_NAME = 'X-CSRF-Token'
+API_AUTH_SCHEME = 'Bearer'
 DATABASE = os.environ.get(
     'PTO_DB_PATH',
     os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
@@ -137,6 +141,21 @@ def get_config():
     return config
 
 
+def has_valid_basic_auth():
+    auth = request.authorization
+    expected_username = os.getenv('PTO_AUTH_USERNAME', '')
+    expected_password = os.getenv('PTO_AUTH_PASSWORD', '')
+    return bool(
+        auth
+        and expected_username
+        and expected_password
+        and auth.username
+        and auth.password
+        and hmac.compare_digest(auth.username, expected_username)
+        and hmac.compare_digest(auth.password, expected_password)
+    )
+
+
 @app.before_request
 def require_auth_for_writes():
     if request.method not in {'POST', 'PUT', 'DELETE'}:
@@ -144,22 +163,46 @@ def require_auth_for_writes():
     if os.getenv('PTO_REQUIRE_AUTH', 'false').strip().lower() not in {'1', 'true', 'yes', 'on'}:
         return None
 
-    auth = request.authorization
-    expected_username = os.getenv('PTO_AUTH_USERNAME', '')
-    expected_password = os.getenv('PTO_AUTH_PASSWORD', '')
-    if (
-        not auth
-        or not expected_username
-        or not expected_password
-        or not auth.username
-        or not auth.password
-        or not hmac.compare_digest(auth.username, expected_username)
-        or not hmac.compare_digest(auth.password, expected_password)
-    ):
+    if not has_valid_basic_auth():
         response = jsonify({'error': 'Authentication required'})
         response.status_code = 401
         response.headers['WWW-Authenticate'] = 'Basic realm="PTO Tracker"'
         return response
+    return None
+
+
+def has_valid_api_auth():
+    authorization = request.headers.get('Authorization', '')
+    scheme, _, credential = authorization.partition(' ')
+    expected_api_key = os.getenv('PTO_API_KEY', '')
+    if (
+        scheme.lower() != API_AUTH_SCHEME.lower()
+        or not credential
+        or not expected_api_key
+    ):
+        return False
+    return hmac.compare_digest(credential, expected_api_key)
+
+
+@app.before_request
+def require_csrf_for_browser_writes():
+    if request.method not in {'POST', 'PUT', 'DELETE', 'PATCH'}:
+        return None
+
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+    if cookie_token is None:
+        # Cookie-less writes must identify themselves as API clients explicitly.
+        if has_valid_api_auth() or (
+            os.getenv('PTO_REQUIRE_AUTH', 'false').strip().lower()
+            in {'1', 'true', 'yes', 'on'}
+            and has_valid_basic_auth()
+        ):
+            return None
+        return jsonify({'error': 'CSRF validation failed'}), 403
+
+    header_token = request.headers.get(CSRF_HEADER_NAME, '')
+    if not header_token or not hmac.compare_digest(header_token, cookie_token):
+        return jsonify({'error': 'CSRF validation failed'}), 403
     return None
 
 
@@ -927,7 +970,18 @@ def generate_vacation_suggestions(year, config):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    response = render_template('index.html')
+    response = app.make_response(response)
+    if request.cookies.get(CSRF_COOKIE_NAME) is None:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            secrets.token_urlsafe(32),
+            httponly=False,
+            secure=request.is_secure,
+            samesite='Strict',
+            path='/',
+        )
+    return response
 
 
 @app.route('/api/config', methods=['GET'])
@@ -1192,30 +1246,34 @@ def api_get_stats():
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
     year_end = date(today_date.year, 12, 31)
-    remaining_vacations = 0
-    remaining_hours = 0
+    remaining_scheduled_days = 0
+    remaining_scheduled_hours = 0
     hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
     for v in vacations:
         start = datetime.strptime(v['start_date'], '%Y-%m-%d').date()
         end = datetime.strptime(v['end_date'], '%Y-%m-%d').date()
         if start > year_end or end < today_date:
             continue
-        if start >= today_date:
-            remaining_vacations += v['days']
-            remaining_hours += v['hours']
-            continue
-
+        scheduled_start = max(start, today_date)
         overlap_end = min(end, year_end)
         total_days = get_vacation_days(v['start_date'], v['end_date'], config)
-        remaining_days = get_vacation_days(today, overlap_end.strftime('%Y-%m-%d'), config)
-        if total_days > 0:
-            remaining_vacations += v['days'] * (remaining_days / total_days)
+        remaining_days = get_vacation_days(
+            scheduled_start.strftime('%Y-%m-%d'),
+            overlap_end.strftime('%Y-%m-%d'),
+            config
+        )
+        if total_days > 0 and remaining_days > 0:
+            remaining_scheduled_days += v['days'] * (remaining_days / total_days)
+        elif total_days == 0 and start >= today_date:
+            # Preserve manually entered PTO for date ranges without weekdays.
+            remaining_scheduled_days += v['days']
         if start >= today_date:
-            remaining_hours += v['hours']
+            remaining_scheduled_hours += v['hours']
     if config.get('pto_accrual_type') == 'hours':
-        remaining_total = (remaining_vacations * hours_per_day) + remaining_hours
+        remaining_total = (remaining_scheduled_days * hours_per_day) + remaining_scheduled_hours
     else:
-        remaining_total = remaining_vacations + (remaining_hours / hours_per_day)
+        remaining_total = remaining_scheduled_days + (remaining_scheduled_hours / hours_per_day)
+    remaining_scheduled_pto_days = round(remaining_total, 2)
     return jsonify({
         'today': today,
         'current_balance': balance,
@@ -1224,7 +1282,9 @@ def api_get_stats():
             v for v in vacations
             if datetime.strptime(v['end_date'], '%Y-%m-%d').date() >= today_date
         ]),
-        'remaining_vacation_days': round(remaining_total, 2),
+        # Keep the legacy field while exposing an explicitly named dashboard metric.
+        'remaining_vacation_days': remaining_scheduled_pto_days,
+        'remaining_scheduled_pto_days': remaining_scheduled_pto_days,
         'total_vacations': len(vacations)
     })
 
