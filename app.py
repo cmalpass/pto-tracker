@@ -5,12 +5,15 @@ import sqlite3
 import math
 import calendar
 import hmac
+import secrets
 import logging
 from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
 app = Flask(__name__)
+CSRF_COOKIE_NAME = 'pto_csrf_token'
+CSRF_HEADER_NAME = 'X-CSRF-Token'
 DATABASE = os.environ.get(
     'PTO_DB_PATH',
     os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
@@ -160,6 +163,22 @@ def require_auth_for_writes():
         response.status_code = 401
         response.headers['WWW-Authenticate'] = 'Basic realm="PTO Tracker"'
         return response
+    return None
+
+
+@app.before_request
+def require_csrf_for_browser_writes():
+    if request.method not in {'POST', 'PUT', 'DELETE', 'PATCH'}:
+        return None
+
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+    # Cookie-less clients are supported for local API usage and test clients.
+    if cookie_token is None:
+        return None
+
+    header_token = request.headers.get(CSRF_HEADER_NAME, '')
+    if not header_token or not hmac.compare_digest(header_token, cookie_token):
+        return jsonify({'error': 'CSRF validation failed'}), 403
     return None
 
 
@@ -765,7 +784,18 @@ def generate_vacation_suggestions(year, config):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    response = render_template('index.html')
+    response = app.make_response(response)
+    if request.cookies.get(CSRF_COOKIE_NAME) is None:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            secrets.token_urlsafe(32),
+            httponly=False,
+            secure=request.is_secure,
+            samesite='Strict',
+            path='/',
+        )
+    return response
 
 
 @app.route('/api/config', methods=['GET'])

@@ -4,6 +4,10 @@ const API = {
     async request(path, options = {}, allowAuthPrompt = true) {
         const headers = { ...(options.headers || {}) };
         if (this.authHeader) headers.Authorization = this.authHeader;
+        if (options.method && !['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase())) {
+            const csrfCookie = document.cookie.split('; ').find(cookie => cookie.startsWith('pto_csrf_token='));
+            if (csrfCookie) headers['X-CSRF-Token'] = decodeURIComponent(csrfCookie.split('=').slice(1).join('='));
+        }
         const res = await fetch(path, { ...options, headers });
         if (res.status === 401 && options.method && allowAuthPrompt) {
             const username = window.prompt('PTO Tracker username:');
