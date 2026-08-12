@@ -684,6 +684,7 @@ def _calculate_week_impact(week_start, week_end, holidays_map, booked_dates,
             total_days_off = _continuous_days_off_count(
                 pto_dates,
                 holidays_set,
+                holidays_require_pto=holidays_require_pto,
                 min_date=date(year, 1, 1),
                 max_date=date(year, 12, 31)
             )
@@ -721,7 +722,7 @@ def generate_heatmap(year, config):
     last_week = year_end + timedelta(days=6 - year_end.weekday())
     holiday_map = {}
     for holiday_year in (year - 1, year, year + 1):
-        holiday_map.update(get_us_holidays(holiday_year))
+        holiday_map.update(get_holidays(holiday_year, config))
     db = get_db()
     rows = db.execute(
         'SELECT start_date, end_date FROM vacations '
@@ -983,9 +984,14 @@ def _valid_pto_day(day, holidays_set, reserved_dates, earliest_date, year, holid
     )
 
 
-def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=None):
+def _continuous_days_off_count(pto_dates, holidays_set, holidays_require_pto=False,
+                               min_date=None, max_date=None):
     interval = _continuous_days_off_interval(
-        pto_dates, holidays_set, min_date=min_date, max_date=max_date
+        pto_dates,
+        holidays_set,
+        holidays_require_pto=holidays_require_pto,
+        min_date=min_date,
+        max_date=max_date
     )
     if not interval:
         return 0
@@ -993,12 +999,14 @@ def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=
     return (end - start).days + 1
 
 
-def _continuous_days_off_interval(pto_dates, holidays_set, min_date=None, max_date=None):
+def _continuous_days_off_interval(pto_dates, holidays_set, holidays_require_pto=False,
+                                  min_date=None, max_date=None):
     if not pto_dates:
         return None
 
     def is_day_off(check_day):
-        return (check_day.weekday() >= 5) or (check_day in holidays_set) or (check_day in pto_dates)
+        holiday_is_day_off = (not holidays_require_pto) and (check_day in holidays_set)
+        return (check_day.weekday() >= 5) or holiday_is_day_off or (check_day in pto_dates)
 
     start = min(pto_dates)
     end = max(pto_dates)
@@ -1020,14 +1028,16 @@ def _continuous_days_off_interval(pto_dates, holidays_set, min_date=None, max_da
 
 def _suggestion_day_metrics(start_day, end_day, holidays_set, holidays_require_pto):
     all_dates = list(_daterange(start_day, end_day))
-    pto_dates = [
-        day.strftime('%Y-%m-%d')
+    pto_date_values = [
+        day
         for day in all_dates
         if day.weekday() < 5 and (holidays_require_pto or day not in holidays_set)
     ]
+    pto_dates = [day.strftime('%Y-%m-%d') for day in pto_date_values]
     off_interval = _continuous_days_off_interval(
-        set(all_dates),
+        set(pto_date_values),
         holidays_set,
+        holidays_require_pto=holidays_require_pto,
         min_date=date(start_day.year, 1, 1),
         max_date=date(start_day.year, 12, 31)
     )

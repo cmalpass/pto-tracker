@@ -228,6 +228,7 @@ async function loadDashboard() {
         document.getElementById('accrued-balance').textContent = balance.accrued.toFixed(1);
         document.getElementById('used-balance').textContent = balance.used.toFixed(1);
         document.getElementById('limit-balance').textContent = balance.limit.toFixed(1);
+        renderRuleSummary(config);
         const ytdForecast = stats.yearly_forecast || [];
         const currentMonthIdx = now.getMonth();
         const ytdAccrued = ytdForecast[currentMonthIdx]?.accrued || 0;
@@ -249,6 +250,40 @@ async function loadDashboard() {
         console.error('Failed to load dashboard:', err);
         showToast('Failed to load dashboard', 'error');
     }
+}
+
+function renderRuleSummary(config = state.config) {
+    const unit = config.pto_accrual_type === 'hours' ? 'hours' : 'days';
+    const chip = document.getElementById('rules-unit-chip');
+    if (chip) chip.textContent = unit === 'hours' ? 'Hours' : 'Days';
+
+    const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    };
+
+    setValue('rule-accrual-type', `${config.pto_accrual_type === 'hours' ? 'Hours' : 'Days'} accrual`);
+    setValue('rule-accrual-method', config.accrual_method === 'pro-rata' ? 'Pro-rata (business days)' : 'Full accrual');
+    setValue('rule-carryover', `${Number(config.pto_carryover_limit || 0).toFixed(0)} ${unit}`);
+    setValue('rule-rollover', config.pto_uses_rollover === false ? 'No rollover' : 'Rollover enabled');
+    setValue('rule-holidays', config.pto_holidays_require_pto === false ? 'Holiday days are free' : 'Holidays require PTO');
+    setValue('rule-vesting', formatSettingLabel(config.pto_vesting_schedule || 'immediate'));
+    setValue('rule-grace', `${Number(config.pto_grace_period_days || 0).toFixed(0)} days`);
+
+    const remainingLabel = document.getElementById('stat-remaining-label');
+    if (remainingLabel) {
+        remainingLabel.textContent = config.pto_accrual_type === 'hours' ? 'Calendar Hours Left' : 'Calendar Days Left';
+    }
+}
+
+function formatSettingLabel(value) {
+    if (!value) return 'Immediate';
+    return String(value)
+        .replace(/[_-]+/g, ' ')
+        .split(' ')
+        .filter(Boolean)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
 }
 
 function currentDaysUsed() {
@@ -305,9 +340,30 @@ function setupCalendar() {
     });
 
     // Allow adding PTO directly from a calendar day.
-    document.getElementById('calendar-grid').addEventListener('click', (e) => {
+    document.getElementById('calendar-grid').addEventListener('click', async (e) => {
         const dayEl = e.target.closest('.cal-day[data-date]');
         if (!dayEl) return;
+
+        if (!state.vacations.length) {
+            try {
+                state.vacations = await API.get('/api/vacations');
+            } catch (err) {
+                console.error('Failed to load vacations for edit:', err);
+            }
+        }
+
+        let vacationId = Number(dayEl.dataset.vacationId || 0);
+        if (vacationId <= 0) {
+            const clickedDate = dayEl.dataset.date;
+            const match = state.vacations.find(v => v.start_date <= clickedDate && v.end_date >= clickedDate);
+            if (match) vacationId = Number(match.id || 0);
+        }
+
+        if (vacationId > 0) {
+            editVacation(vacationId);
+            return;
+        }
+
         openCreateVacationModal(dayEl.dataset.date);
     });
 }
@@ -359,11 +415,14 @@ async function renderCalendar() {
             const dayEvents = monthEvents.filter(e => e.date === dateStr);
             if (dayEvents.some(e => e.type === 'holiday')) classes += ' holiday';
             if (dayEvents.some(e => e.type === 'vacation')) classes += ' vacation';
-            html += `<div class="${classes}" data-date="${dateStr}"><span class="day-number">${d}</span>`;
+            const vacationEvent = dayEvents.find(e => e.type === 'vacation' && e.vacation_id);
+            const vacationIdAttr = vacationEvent ? ` data-vacation-id="${vacationEvent.vacation_id}"` : '';
+            html += `<div class="${classes}" data-date="${dateStr}"${vacationIdAttr}><span class="day-number">${d}</span>`;
             dayEvents.slice(0, 2).forEach(e => {
-                const label = e.type === 'holiday' ? e.name.substring(0, 8) : (e.name || 'Vacation').substring(0, 10);
+                const rawName = e.name || (e.type === 'holiday' ? 'Holiday' : 'Vacation');
+                const label = e.type === 'holiday' ? rawName : rawName.substring(0, 10);
                 const eventClass = e.type === 'holiday' || e.type === 'vacation' ? e.type : 'vacation';
-                html += `<span class="day-event ${eventClass}">${escapeHtml(label)}</span>`;
+                html += `<span class="day-event ${eventClass}" title="${escapeHtml(rawName)}">${escapeHtml(label)}</span>`;
             });
             html += '</div>';
         }
@@ -970,8 +1029,11 @@ async function openSettings() {
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
         document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
-        document.getElementById('accrual-method').value = config.accrual_method || 'full';
+        document.getElementById('accrual-method').value = config.accrual_method || 'pro-rata';
         document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
+        document.getElementById('start-year').value = config.pto_start_year || getTodayDate().getFullYear();
+        document.getElementById('cashout-rate').value = config.pto_cashout_rate ?? 0;
+        document.getElementById('grace-period').value = config.pto_grace_period_days || 0;
         document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
         document.getElementById('timezone').value = config.timezone || 'UTC';
         document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
