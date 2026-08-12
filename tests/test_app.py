@@ -143,6 +143,45 @@ async def test_settings_save():
         await browser.close()
 
 
+async def test_policy_presets(request_context):
+    """Verify presets are safe to preview and persist through the config API."""
+    headers = await csrf_headers(request_context)
+    response = await request_context.get('/api/config/presets')
+    assert response.status == 200
+    presets = await response.json()
+    assert {'standard', 'generous', 'use-it-or-lose-it'} <= set(presets)
+    preset = presets['standard']['settings']
+    assert preset['pto_accrual_type'] == 'days'
+    assert preset['pay_periods_per_year'] == 26
+    saved = await request_context.put('/api/config', headers=headers, data=preset)
+    assert saved.status == 200
+    config = await (await request_context.get('/api/config')).json()
+    assert config['pto_accrual_type'] == 'days'
+    assert config['pto_uses_rollover'] is True
+
+
+async def test_settings_survive_preset_failure():
+    """Verify settings remain usable when the optional preset endpoint fails."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.route(
+            "**/api/config/presets",
+            lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":"temporarily unavailable"}',
+            ),
+        )
+        await page.goto(BASE_URL)
+        await page.click("#btn-settings")
+        await page.wait_for_timeout(500)
+        assert await page.locator("#settings-modal").is_visible()
+        assert await page.locator("button:has-text('Save Settings')").is_visible()
+        assert await page.locator("#policy-preset").is_disabled()
+        await browser.close()
+
+
 async def test_holiday_country_configuration(request_context):
     """Verify country-specific holidays and invalid-country validation."""
     headers = await csrf_headers(request_context)
@@ -415,6 +454,8 @@ async def run_isolated_tests():
         test_calendar_shows_holidays,
         test_forecast_table,
         test_settings_save,
+        test_policy_presets,
+        test_settings_survive_preset_failure,
         test_holiday_country_configuration,
         test_chart_rendering,
         test_days_remaining_ignores_dst,
@@ -433,6 +474,7 @@ async def run_isolated_tests():
                 await reset_database(request_context)
                 try:
                     if test in {
+                        test_policy_presets,
                         test_export_and_note_validation,
                         test_holiday_country_configuration,
                         test_smart_warnings_and_suggestion_filters,
