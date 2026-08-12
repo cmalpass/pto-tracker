@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260812-3';
+} from './modules/state.js?v=20260812-4';
 import {
     announce,
     closeDialog,
@@ -15,7 +15,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260812-3';
+} from './modules/dom.js?v=20260812-4';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -27,19 +27,19 @@ import {
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom
-} from './modules/rendering.js?v=20260812-3';
+} from './modules/rendering.js?v=20260812-4';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260812-3';
-import { generateSuggestions } from './modules/suggestions.js?v=20260812-3';
-import { configWarnings } from './modules/settings.js?v=20260812-3';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-3';
+} from './modules/calendar.js?v=20260812-4';
+import { generateSuggestions } from './modules/suggestions.js?v=20260812-4';
+import { configWarnings } from './modules/settings.js?v=20260812-4';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-4';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260812-3';
+} from './modules/forecast.js?v=20260812-4';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -431,13 +431,25 @@ function setupVacationList() {
 }
 
 async function deleteVacation(id) {
-    if (!confirm('Delete this vacation?')) return;
+    if (!window.confirm('Delete this vacation? This can be undone briefly.')) return;
     try {
-        await PTOStore.deleteVacation(id);
-        showToast('Vacation deleted', 'success');
+        const deleted = state.vacations.find(item => item.id === id);
+        if (!deleted || !(await PTOStore.deleteVacation(id))) return;
+        showToast('Vacation deleted', 'success', {
+            label: 'Undo',
+            onClick: async () => {
+                try {
+                    await PTOStore.restoreVacation(id);
+                    await refreshViews();
+                    showToast('Vacation restored', 'success');
+                } catch (error) {
+                    showToast(error.message || 'Failed to restore vacation', 'error');
+                }
+            }
+        });
         await refreshViews();
     } catch (err) {
-        showToast('Failed to delete', 'error');
+        showToast(err.message || 'Failed to delete vacation', 'error');
     }
 }
 
@@ -767,8 +779,21 @@ async function renderStoredNotes() {
     list.querySelectorAll('[data-local-note-id]').forEach(button => {
         button.addEventListener('click', async () => {
             try {
-                await PTOStore.deleteNote(Number(button.dataset.localNoteId));
-                showToast('Note deleted', 'success');
+                if (!window.confirm('Delete this note? This can be undone briefly.')) return;
+                const id = Number(button.dataset.localNoteId);
+                if (!(await PTOStore.deleteNote(id))) return;
+                showToast('Note deleted', 'success', {
+                    label: 'Undo',
+                    onClick: async () => {
+                        try {
+                            await PTOStore.restoreNote(id);
+                            await renderStoredNotes();
+                            showToast('Note restored', 'success');
+                        } catch (error) {
+                            showToast(error.message || 'Failed to restore note', 'error');
+                        }
+                    }
+                });
                 await renderStoredNotes();
             } catch (error) {
                 showToast(error.message || 'Failed to delete note', 'error');

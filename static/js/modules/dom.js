@@ -27,6 +27,7 @@ export function setText(selector, value) {
 }
 
 const dialogStates = new WeakMap();
+let toastTimer;
 const focusableSelector = [
     'a[href]', 'button:not([disabled])', 'input:not([disabled])',
     'select:not([disabled])', 'textarea:not([disabled])',
@@ -100,13 +101,27 @@ export function escapeHtml(value) {
     return node.innerHTML;
 }
 
-export function showToast(message, type = '') {
+export function showToast(message, type = '', action = null) {
     const toast = document.getElementById('toast');
     if (!toast) return;
-    toast.textContent = String(message ?? '');
+    clearTimeout(toastTimer);
+    toast.replaceChildren();
+    toast.append(document.createTextNode(String(message ?? '')));
+    if (action?.label && typeof action.onClick === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'toast-action';
+        button.textContent = action.label;
+        button.setAttribute('aria-label', action.label);
+        button.addEventListener('click', () => {
+            toast.classList.remove('show');
+            action.onClick();
+        });
+        toast.append(button);
+    }
     toast.className = `toast show ${type}`;
     announce(message);
-    setTimeout(() => toast.classList.remove('show'), 3000);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), action ? 6000 : 3000);
 }
 
 export function showWarningToast(warnings = []) {

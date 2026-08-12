@@ -9,10 +9,12 @@
     'use strict';
 
     const DB_NAME = 'pto-tracker';
-    const DB_VERSION = 1;
-    const SCHEMA_VERSION = 1;
-    const STORES = Object.freeze(['config', 'vacations', 'notes']);
-    const FALLBACK_KEY = 'pto-tracker:data:v1';
+    const DB_VERSION = 2;
+    const SCHEMA_VERSION = 2;
+    const DATA_STORES = Object.freeze(['config', 'vacations', 'notes']);
+    const STORES = Object.freeze([...DATA_STORES, 'history']);
+    const FALLBACK_KEY = 'pto-tracker:data:v2';
+    const LEGACY_FALLBACK_KEY = 'pto-tracker:data:v1';
     let databasePromise;
 
     function clone(value) {
@@ -64,12 +66,36 @@
             if (record.id != null && (!Number.isInteger(record.id) || record.id < 1)) {
                 throw new TypeError('Vacation id must be a positive integer');
             }
-        } else if (!isCanonicalDate(record.date)) {
+        } else if (storeName === 'notes' && !isCanonicalDate(record.date)) {
             throw new TypeError('Note date must use YYYY-MM-DD format');
-        } else if (record.id != null && (!Number.isInteger(record.id) || record.id < 1)) {
+        } else if (storeName === 'notes'
+                && record.id != null && (!Number.isInteger(record.id) || record.id < 1)) {
             throw new TypeError('Note id must be a positive integer');
+        } else if (storeName === 'history') {
+            if (!['create', 'update', 'delete', 'restore', 'import'].includes(record.action)) {
+                throw new TypeError('History action is invalid');
+            }
+            if (!['config', 'vacations', 'notes', 'system'].includes(record.store)) {
+                throw new TypeError('History store is invalid');
+            }
+            if (!record.at || typeof record.at !== 'string') {
+                throw new TypeError('History timestamp is required');
+            }
         }
         return record;
+    }
+
+    function normalizeRecord(storeName, value) {
+        const record = clone(value);
+        if (record && (storeName === 'vacations' || storeName === 'notes')
+                && record.deleted_at == null) {
+            record.deleted_at = null;
+        }
+        return record;
+    }
+
+    function isDeleted(record) {
+        return Boolean(record?.deleted_at);
     }
 
     function openDatabase() {
@@ -98,6 +124,20 @@
                 if (!db.objectStoreNames.contains('notes')) {
                     db.createObjectStore('notes', { keyPath: 'id', autoIncrement: true });
                 }
+                if (!db.objectStoreNames.contains('history')) {
+                    db.createObjectStore('history', { keyPath: 'id', autoIncrement: true });
+                }
+                ['vacations', 'notes'].forEach(storeName => {
+                    if (!request.transaction.objectStore(storeName)) return;
+                    const cursorRequest = request.transaction.objectStore(storeName).openCursor();
+                    cursorRequest.onsuccess = () => {
+                        const cursor = cursorRequest.result;
+                        if (!cursor) return;
+                        const record = normalizeRecord(storeName, cursor.value);
+                        cursor.update(record);
+                        cursor.continue();
+                    };
+                });
             };
             request.onsuccess = () => {
                 const db = request.result;
@@ -118,9 +158,15 @@
     }
 
     function readFallback() {
-        const raw = fallbackStorage().getItem(FALLBACK_KEY);
+        const storage = fallbackStorage();
+        const currentRaw = storage.getItem(FALLBACK_KEY);
+        const legacyRaw = currentRaw ? null : storage.getItem(LEGACY_FALLBACK_KEY);
+        const raw = currentRaw || legacyRaw;
         if (!raw) {
-            return { config: [], vacations: [], notes: [], nextId: { vacations: 1, notes: 1 } };
+            return {
+                config: [], vacations: [], notes: [], history: [],
+                nextId: { vacations: 1, notes: 1, history: 1 }
+            };
         }
         try {
             const data = JSON.parse(raw);
@@ -128,11 +174,22 @@
                 throw new TypeError('Stored PTO data must be an object');
             }
             for (const name of STORES) {
-                if (!Array.isArray(data[name])) {
+                if (name !== 'history' && !Array.isArray(data[name])) {
                     throw new TypeError(`Stored ${name} data must be an array`);
                 }
             }
-            data.nextId = data.nextId || { vacations: 1, notes: 1 };
+            data.history = Array.isArray(data.history) ? data.history : [];
+            data.nextId = {
+                vacations: data.nextId?.vacations || 1,
+                notes: data.nextId?.notes || 1,
+                history: data.nextId?.history || 1
+            };
+            data.vacations = data.vacations.map(item => normalizeRecord('vacations', item));
+            data.notes = data.notes.map(item => normalizeRecord('notes', item));
+            if (legacyRaw) {
+                writeFallback(data);
+                storage.removeItem(LEGACY_FALLBACK_KEY);
+            }
             return data;
         } catch (error) {
             throw new Error(`Unable to read browser PTO data: ${error.message}`);
@@ -165,16 +222,23 @@
         });
     }
 
-    async function get(storeName, id) {
+    async function getRaw(storeName, id) {
         assertStore(storeName);
         const db = await openDatabase();
         if (db) {
-            return idbRequest(db, storeName, 'readonly', store => store.get(id));
+            const record = await idbRequest(db, storeName, 'readonly', store => store.get(id));
+            return normalizeRecord(storeName, record);
         }
-        return clone(readFallback()[storeName].find(item => item.id === id));
+        return normalizeRecord(storeName, readFallback()[storeName].find(item => item.id === id));
     }
 
-    async function list(storeName) {
+    async function get(storeName, id, options = {}) {
+        const record = await getRaw(storeName, id);
+        if (!options.includeDeleted && isDeleted(record)) return undefined;
+        return record;
+    }
+
+    async function list(storeName, options = {}) {
         assertStore(storeName);
         const db = await openDatabase();
         let records;
@@ -183,53 +247,94 @@
         } else {
             records = clone(readFallback()[storeName]);
         }
+        records = records.map(record => normalizeRecord(storeName, record));
+        if (!options.includeDeleted && (storeName === 'vacations' || storeName === 'notes')) {
+            records = records.filter(record => !isDeleted(record));
+        }
         if (storeName === 'vacations') {
             records.sort((a, b) => a.start_date.localeCompare(b.start_date) || Number(a.id) - Number(b.id));
         } else if (storeName === 'notes') {
             records.sort((a, b) => b.date.localeCompare(a.date) || Number(b.id) - Number(a.id));
+        } else if (storeName === 'history') {
+            records.sort((a, b) => String(b.at).localeCompare(String(a.at)) || Number(b.id) - Number(a.id));
         }
         return records;
     }
 
-    async function put(storeName, value) {
+    async function writeRecord(storeName, value) {
         const record = validateRecord(storeName, value);
         if (storeName !== 'config' && !record.created_at) {
             record.created_at = new Date().toISOString();
         }
+        const normalized = normalizeRecord(storeName, record);
         const db = await openDatabase();
         if (db) {
-            const id = await idbRequest(db, storeName, 'readwrite', store => store.put(record));
-            return get(storeName, id);
+            const id = await idbRequest(db, storeName, 'readwrite', store => store.put(normalized));
+            return getRaw(storeName, id);
         }
         const data = readFallback();
-        if (storeName !== 'config' && record.id == null) {
-            record.id = data.nextId[storeName] || 1;
-            data.nextId[storeName] = record.id + 1;
-        } else if (storeName !== 'config' && Number.isInteger(record.id)) {
-            data.nextId[storeName] = Math.max(data.nextId[storeName] || 1, record.id + 1);
+        if (storeName !== 'config' && normalized.id == null) {
+            normalized.id = data.nextId[storeName] || 1;
+            data.nextId[storeName] = normalized.id + 1;
+        } else if (storeName !== 'config' && Number.isInteger(normalized.id)) {
+            data.nextId[storeName] = Math.max(data.nextId[storeName] || 1, normalized.id + 1);
         }
-        const index = data[storeName].findIndex(item => item.id === record.id);
+        const index = data[storeName].findIndex(item => item.id === normalized.id);
         if (index < 0) {
-            data[storeName].push(record);
+            data[storeName].push(normalized);
         } else {
-            data[storeName][index] = record;
+            data[storeName][index] = normalized;
         }
         writeFallback(data);
-        return clone(record);
+        return clone(normalized);
+    }
+
+    async function appendHistory(action, storeName, record) {
+        return writeRecord('history', {
+            action,
+            store: storeName,
+            recordId: record?.id ?? null,
+            at: new Date().toISOString(),
+            record: clone(record)
+        });
+    }
+
+    async function put(storeName, value) {
+        const previous = value?.id == null ? null : await getRaw(storeName, value.id);
+        const record = await writeRecord(storeName, value);
+        if (storeName !== 'history') {
+            await appendHistory(previous ? 'update' : 'create', storeName, record);
+        }
+        return record;
+    }
+
+    async function softDelete(storeName, id) {
+        if (storeName !== 'vacations' && storeName !== 'notes') {
+            throw new TypeError('Only vacations and notes can be deleted');
+        }
+        const record = await getRaw(storeName, id);
+        if (!record || isDeleted(record)) return false;
+        const deleted = await writeRecord(storeName, {
+            ...record,
+            deleted_at: new Date().toISOString()
+        });
+        await appendHistory('delete', storeName, deleted);
+        return true;
+    }
+
+    async function restore(storeName, id) {
+        if (storeName !== 'vacations' && storeName !== 'notes') {
+            throw new TypeError('Only vacations and notes can be restored');
+        }
+        const record = await getRaw(storeName, id);
+        if (!record || !isDeleted(record)) return false;
+        const restored = await writeRecord(storeName, { ...record, deleted_at: null });
+        await appendHistory('restore', storeName, restored);
+        return true;
     }
 
     async function remove(storeName, id) {
-        assertStore(storeName);
-        const db = await openDatabase();
-        if (db) {
-            await idbRequest(db, storeName, 'readwrite', store => store.delete(id));
-            return true;
-        }
-        const data = readFallback();
-        const length = data[storeName].length;
-        data[storeName] = data[storeName].filter(item => item.id !== id);
-        writeFallback(data);
-        return data[storeName].length !== length;
+        return softDelete(storeName, id);
     }
 
     async function clear(storeName) {
@@ -280,8 +385,8 @@
 
     async function importJSON(input, options) {
         const payload = typeof input === 'string' ? JSON.parse(input) : clone(input);
-        if (!payload || payload.schemaVersion !== SCHEMA_VERSION || !payload.data) {
-            throw new TypeError(`Unsupported PTO data schema; expected version ${SCHEMA_VERSION}`);
+        if (!payload || ![1, SCHEMA_VERSION].includes(payload.schemaVersion) || !payload.data) {
+            throw new TypeError(`Unsupported PTO data schema; expected version 1 or ${SCHEMA_VERSION}`);
         }
         if (!Array.isArray(payload.data.vacations) || !Array.isArray(payload.data.notes)) {
             throw new TypeError('Imported vacations and notes must be arrays');
@@ -300,11 +405,11 @@
             const db = await openDatabase();
             if (db) {
                 await new Promise((resolve, reject) => {
-                    const transaction = db.transaction(STORES, 'readwrite');
+                    const transaction = db.transaction(DATA_STORES, 'readwrite');
                     transaction.oncomplete = resolve;
                     transaction.onerror = () => reject(transaction.error);
                     transaction.onabort = () => reject(transaction.error || new Error('Import aborted'));
-                    STORES.forEach(storeName => transaction.objectStore(storeName).clear());
+                    DATA_STORES.forEach(storeName => transaction.objectStore(storeName).clear());
                     if (incoming.config) transaction.objectStore('config').put(incoming.config);
                     incoming.vacations.forEach(record =>
                         transaction.objectStore('vacations').put(record));
@@ -313,7 +418,7 @@
             } else {
                 const previous = readFallback();
                 try {
-                    await Promise.all(STORES.map(clear));
+                    await Promise.all(DATA_STORES.map(clear));
                     if (incoming.config) await put('config', incoming.config);
                     for (const record of incoming.vacations) await put('vacations', record);
                     for (const record of incoming.notes) await put('notes', record);
@@ -359,6 +464,7 @@
         put,
         list,
         delete: remove,
+        restore,
         clear,
         getConfig,
         putConfig,
@@ -366,10 +472,14 @@
         putVacation: value => put('vacations', value),
         listVacations: () => list('vacations'),
         deleteVacation: id => remove('vacations', id),
+        restoreVacation: id => restore('vacations', id),
         getNote: id => get('notes', id),
         putNote: value => put('notes', value),
         listNotes: () => list('notes'),
         deleteNote: id => remove('notes', id),
+        restoreNote: id => restore('notes', id),
+        getHistory: id => get('history', id),
+        listHistory: () => list('history', { includeDeleted: true }),
         exportJSON,
         importJSON,
         requestPersistentStorage
