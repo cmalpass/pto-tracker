@@ -4,12 +4,64 @@ import json
 import sqlite3
 import math
 import calendar
+import hmac
+import logging
 from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
 app = Flask(__name__)
 DATABASE = os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
+logger = logging.getLogger(__name__)
+
+NUMERIC_CONFIG_KEYS = {
+    'pto_accrual_per_pay_period',
+    'pto_hours_per_day',
+    'pay_periods_per_year',
+    'pto_carryover_limit',
+    'pto_cashout_rate',
+    'pto_grace_period_days',
+}
+BOOLEAN_CONFIG_KEYS = {
+    'pto_holidays_require_pto',
+    'pto_uses_rollover',
+    'pto_lose_above_limit',
+}
+VALID_CONFIG_KEYS = {
+    'pto_accrual_per_pay_period',
+    'pto_accrual_type',
+    'pto_hours_per_day',
+    'pto_holidays_require_pto',
+    'pay_periods_per_year',
+    'accrual_start_date',
+    'accrual_method',
+    'pto_carryover_limit',
+    'pto_uses_rollover',
+    'pto_cashout_rate',
+    'pto_lose_above_limit',
+    'pto_start_year',
+    'pto_vesting_schedule',
+    'pto_grace_period_days',
+}
+
+
+def default_config():
+    return {
+        'pto_accrual_per_pay_period': '1.0',
+        'pto_accrual_type': 'days',
+        'pto_hours_per_day': '8',
+        'pto_holidays_require_pto': 'true',
+        'pay_periods_per_year': '26',
+        'accrual_start_date': f'{datetime.now().year}-01-01',
+        'accrual_method': 'pro-rata',
+        'pto_carryover_limit': '40',
+        'pto_uses_rollover': 'true',
+        'pto_cashout_rate': '0',
+        'pto_lose_above_limit': 'true',
+        'pto_start_year': str(datetime.now().year),
+        'pto_vesting_schedule': 'immediate',
+        'pto_grace_period_days': '0',
+    }
 
 
 def get_db():
@@ -51,22 +103,7 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
     ''')
-    defaults = {
-        'pto_accrual_per_pay_period': '1.0',
-        'pto_accrual_type': 'days',
-        'pto_hours_per_day': '8',
-        'pto_holidays_require_pto': 'true',
-        'pay_periods_per_year': '26',
-        'accrual_start_date': '2026-01-01',
-        'accrual_method': 'pro-rata',
-        'pto_carryover_limit': '40',
-        'pto_uses_rollover': 'true',
-        'pto_cashout_rate': '0',
-        'pto_lose_above_limit': 'true',
-        'pto_start_year': str(datetime.now().year),
-        'pto_vesting_schedule': 'immediate',
-        'pto_grace_period_days': '0',
-    }
+    defaults = default_config()
     for key, value in defaults.items():
         conn.execute('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)',
                      (key, value))
@@ -81,16 +118,60 @@ def get_config():
     for row in rows:
         key = row['key']
         value = row['value']
-        if key in ('pto_accrual_per_pay_period', 'pay_periods_per_year', 'pto_hours_per_day',
-                    'pto_carryover_limit', 'pto_grace_period_days'):
-            config[key] = float(value)
-        elif key in ('pto_uses_rollover', 'pto_lose_above_limit', 'pto_holidays_require_pto'):
+        if key in NUMERIC_CONFIG_KEYS:
+            try:
+                config[key] = float(value)
+            except (TypeError, ValueError):
+                fallback = float(default_config()[key])
+                logger.warning('Invalid numeric config %s=%r; using %s', key, value, fallback)
+                config[key] = fallback
+        elif key in BOOLEAN_CONFIG_KEYS:
             config[key] = value.lower() == 'true'
-        elif key in ('pto_cashout_rate',):
-            config[key] = float(value)
         else:
             config[key] = value
     return config
+
+
+@app.before_request
+def require_auth_for_writes():
+    if request.method not in {'POST', 'PUT', 'DELETE'}:
+        return None
+    if os.getenv('PTO_REQUIRE_AUTH', 'false').strip().lower() not in {'1', 'true', 'yes', 'on'}:
+        return None
+
+    auth = request.authorization
+    expected_username = os.getenv('PTO_AUTH_USERNAME', '')
+    expected_password = os.getenv('PTO_AUTH_PASSWORD', '')
+    if (
+        not auth
+        or not expected_username
+        or not expected_password
+        or not auth.username
+        or not auth.password
+        or not hmac.compare_digest(auth.username, expected_username)
+        or not hmac.compare_digest(auth.password, expected_password)
+    ):
+        response = jsonify({'error': 'Authentication required'})
+        response.status_code = 401
+        response.headers['WWW-Authenticate'] = 'Basic realm="PTO Tracker"'
+        return response
+    return None
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "connect-src 'self'; "
+        "base-uri 'self'; frame-ancestors 'none'"
+    )
+    return response
 
 
 def get_us_holidays(year):
@@ -610,16 +691,38 @@ def api_get_config():
 
 @app.route('/api/config', methods=['PUT'])
 def api_update_config():
-    data = request.get_json()
-    db = get_db()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Request body must be a JSON object'}), 400
+
+    validated = {}
     for key, value in data.items():
-        if key.startswith('pto_') or key.startswith('accrual') or key == 'pay_periods_per_year':
+        if key not in VALID_CONFIG_KEYS:
+            return jsonify({'error': f'Invalid config key: {key}'}), 400
+        if key in NUMERIC_CONFIG_KEYS:
             if isinstance(value, bool):
-                db.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
-                          (key, str(value).lower()))
+                return jsonify({'error': f'{key} must be numeric'}), 400
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return jsonify({'error': f'{key} must be numeric'}), 400
+            if not math.isfinite(numeric_value):
+                return jsonify({'error': f'{key} must be numeric'}), 400
+            validated[key] = str(value)
+        elif key in BOOLEAN_CONFIG_KEYS:
+            if isinstance(value, bool):
+                validated[key] = str(value).lower()
+            elif isinstance(value, str) and value.strip().lower() in {'true', 'false'}:
+                validated[key] = value.strip().lower()
             else:
-                db.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
-                          (key, str(value)))
+                return jsonify({'error': f'{key} must be boolean'}), 400
+        else:
+            validated[key] = str(value)
+
+    db = get_db()
+    for key, value in validated.items():
+        db.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
+                   (key, value))
     db.commit()
     return jsonify({'status': 'ok', 'config': get_config()})
 
@@ -846,4 +949,5 @@ with app.app_context():
     init_db()
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    debug = os.getenv('FLASK_DEBUG', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+    app.run(debug=debug, host='0.0.0.0', port=5000)
