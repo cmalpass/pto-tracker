@@ -31,7 +31,9 @@ def close_db(exc):
 
 
 def init_db():
-    os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
+    database_dir = os.path.dirname(DATABASE)
+    if database_dir:
+        os.makedirs(database_dir, exist_ok=True)
     conn = sqlite3.connect(DATABASE)
     conn.executescript('''
         CREATE TABLE IF NOT EXISTS config (
@@ -858,11 +860,11 @@ def _validate_note_payload(data):
     data = data or {}
     note_date = data.get('date')
     text = str(data.get('text', '')).strip()
-    if not note_date or not text:
+    if not isinstance(note_date, str) or not note_date or not text:
         return None, 'date and text are required'
     try:
         datetime.strptime(note_date, '%Y-%m-%d')
-    except ValueError:
+    except (TypeError, ValueError):
         return None, 'date must use yyyy-mm-dd format'
     return {'date': note_date, 'text': text}, None
 
@@ -936,34 +938,40 @@ def _export_rows():
     ).fetchall(), generate_yearly_forecast(year, config), year
 
 
+def _safe_export_value(value):
+    if isinstance(value, str) and value.startswith(('=', '+', '-', '@')):
+        return "'" + value
+    return value
+
+
 @app.route('/api/export/excel', methods=['GET'])
 def api_export_excel():
     config, balance, vacations, forecast, year = _export_rows()
     workbook = Workbook()
     summary = workbook.active
     summary.title = 'Balance Summary'
-    summary.append(['Metric', 'Value'])
-    summary.append(['Current Balance', balance['balance']])
-    summary.append(['Accrued YTD', balance['accrued']])
-    summary.append(['Used YTD', balance['used']])
-    summary.append(['Carryover from prior year', balance['carry']])
+    summary.append([_safe_export_value(value) for value in ['Metric', 'Value']])
+    summary.append([_safe_export_value(value) for value in ['Current Balance', balance['balance']]])
+    summary.append([_safe_export_value(value) for value in ['Accrued YTD', balance['accrued']]])
+    summary.append([_safe_export_value(value) for value in ['Used YTD', balance['used']]])
+    summary.append([_safe_export_value(value) for value in ['Carryover from prior year', balance['carry']]])
 
     schedule = workbook.create_sheet('Vacation Schedule')
-    schedule.append(['Name', 'Start', 'End', 'Days', 'Hours'])
+    schedule.append([_safe_export_value(value) for value in ['Name', 'Start', 'End', 'Days', 'Hours']])
     for vacation in vacations:
-        schedule.append(list(vacation))
+        schedule.append([_safe_export_value(value) for value in vacation])
 
     forecast_sheet = workbook.create_sheet('Monthly Forecast')
-    forecast_sheet.append(['Month', 'Accrued', 'Used', 'Balance'])
+    forecast_sheet.append([_safe_export_value(value) for value in ['Month', 'Accrued', 'Used', 'Balance']])
     for month in forecast:
-        forecast_sheet.append([
+        forecast_sheet.append([_safe_export_value(value) for value in [
             month['month_name'], month['accrued'], month['used'], month['balance']
-        ])
+        ]])
 
     config_sheet = workbook.create_sheet('Configuration')
-    config_sheet.append(['Setting', 'Value'])
+    config_sheet.append([_safe_export_value(value) for value in ['Setting', 'Value']])
     for key, value in sorted(config.items()):
-        config_sheet.append([key, value])
+        config_sheet.append([_safe_export_value(value) for value in [key, value]])
 
     output = BytesIO()
     workbook.save(output)
@@ -981,8 +989,11 @@ def api_export_csv():
     _, _, vacations, _, year = _export_rows()
     output = StringIO()
     csv = csv_writer(output)
-    csv.writerow(['Name', 'Start', 'End', 'Days', 'Hours'])
-    csv.writerows(vacations)
+    csv.writerow([_safe_export_value(value) for value in ['Name', 'Start', 'End', 'Days', 'Hours']])
+    csv.writerows([
+        [_safe_export_value(value) for value in vacation]
+        for vacation in vacations
+    ])
     response = send_file(
         BytesIO(output.getvalue().encode('utf-8')),
         as_attachment=True,

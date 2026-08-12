@@ -2,7 +2,9 @@
 import asyncio
 import sys
 import os
+from io import BytesIO
 from datetime import date
+from openpyxl import load_workbook
 from playwright.async_api import async_playwright, Page
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -188,6 +190,31 @@ async def test_delete_vacation():
         await browser.close()
 
 
+async def test_export_and_note_validation(request_context):
+    """Verify exports neutralize formulas and malformed note dates return 400."""
+    malformed = await request_context.post('/api/notes', data={
+        'date': 123,
+        'text': 'Malformed date'
+    })
+    assert malformed.status == 400
+
+    vacation = await request_context.post('/api/vacations', data={
+        'name': '=HYPERLINK("https://example.com","Injected")',
+        'start_date': f'{TEST_YEAR}-11-02',
+        'end_date': f'{TEST_YEAR}-11-02',
+        'auto_days': True
+    })
+    assert vacation.status == 201
+
+    csv_response = await request_context.get('/api/export/csv')
+    assert csv_response.status == 200
+    assert "'=HYPERLINK" in (await csv_response.body()).decode('utf-8')
+
+    excel_response = await request_context.get('/api/export/excel')
+    workbook = load_workbook(filename=BytesIO(await excel_response.body()), data_only=False)
+    assert workbook['Vacation Schedule']['A2'].value.startswith("'=")
+
+
 async def main():
     """Run all tests."""
     tests = [
@@ -198,6 +225,7 @@ async def main():
         test_settings_save,
         test_chart_rendering,
         test_delete_vacation,
+        test_export_and_note_validation,
     ]
     passed = 0
     failed = 0
@@ -245,6 +273,7 @@ async def run_isolated_tests():
         test_settings_save,
         test_chart_rendering,
         test_delete_vacation,
+        test_export_and_note_validation,
     ]
     passed = 0
     failed = 0
@@ -254,7 +283,10 @@ async def run_isolated_tests():
             for test in tests:
                 await reset_database(request_context)
                 try:
-                    await test()
+                    if test is test_export_and_note_validation:
+                        await test(request_context)
+                    else:
+                        await test()
                     passed += 1
                 except Exception as e:
                     print(f"❌ {test.__name__} failed: {e}")
