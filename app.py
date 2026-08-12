@@ -146,21 +146,35 @@ def calculate_accrual_to_date(target_date, config):
     pay_period_days = 365.25 / config['pay_periods_per_year']
     days_elapsed = (target - accrual_start).days
     if config['accrual_method'] == 'pro-rata':
-        business_days_worked = 0
-        current = accrual_start
         holidays_set = set()
         for y in range(accrual_start.year, target.year + 1):
             holidays_set.update(get_us_holidays(y))
-        while current <= target:
-            if is_business_day(current) and current not in holidays_set:
-                business_days_worked += 1
-            current += timedelta(days=1)
+        business_days_worked = _count_business_days(accrual_start, target, holidays_set)
         accrual_per_day = config['pto_accrual_per_pay_period'] / (pay_period_days * 5 / 7)
         accrued = business_days_worked * accrual_per_day
     else:
         pay_periods_elapsed = days_elapsed / pay_period_days
         accrued = pay_periods_elapsed * config['pto_accrual_per_pay_period']
     return accrued
+
+
+def _count_business_days(start, end, holidays_set=None):
+    """Count weekdays in an inclusive date range, excluding supplied holidays."""
+    if start > end:
+        return 0
+    total_days = (end - start).days + 1
+    full_weeks, remainder = divmod(total_days, 7)
+    business_days = full_weeks * 5
+    business_days += sum(
+        (start.weekday() + offset) % 7 < 5
+        for offset in range(remainder)
+    )
+    if holidays_set:
+        business_days -= sum(
+            start <= holiday <= end and holiday.weekday() < 5
+            for holiday in holidays_set
+        )
+    return business_days
 
 
 def calculate_vacation_usage_in_range(range_start, range_end, config):
@@ -220,7 +234,7 @@ def calculate_balance_on_date(target_date, config):
 
     For the first accrual year: balance = accrued − used (no cap during year).
     For subsequent years:
-      1. Compute Dec-31 balance of the prior year (recursive).
+      1. Compute each prior year's Dec-31 balance iteratively.
       2. Apply rollover rules:
          - pto_uses_rollover=False  → carry = 0 (use-it-or-lose-it)
          - pto_lose_above_limit=True → carry = min(carry, carryover_limit)
@@ -238,53 +252,48 @@ def calculate_balance_on_date(target_date, config):
     lose_above_limit = config.get('pto_lose_above_limit', False)
     effective_limit = (carryover_limit_days * hours_per_day) if is_hours else carryover_limit_days
 
-    # --- Determine year window and carried-over balance ---
-    if target.year <= accrual_start.year:
-        # First (or pre-start) accrual year — no carry
-        carry_balance = 0.0
-        year_window_start = accrual_start
-    else:
-        dec31_prev = date(target.year - 1, 12, 31)
-        prev = calculate_balance_on_date(dec31_prev.strftime('%Y-%m-%d'), config)
-        carry_balance = prev['balance']
+    if target < accrual_start:
+        return {
+            'accrued': 0.0, 'used': 0.0, 'used_days': 0.0, 'used_hours': 0.0,
+            'balance': 0.0, 'limit': round(effective_limit, 2), 'carry': 0.0
+        }
 
-        # Apply year-end rollover rules
+    # Walk each accrual year once, carrying forward the prior year's ending balance.
+    carry_balance = 0.0
+    for year in range(accrual_start.year, target.year + 1):
+        year_window_start = max(accrual_start, date(year, 1, 1))
+        year_window_end = min(target, date(year, 12, 31))
+        year_accrual = (
+            calculate_accrual_to_date(year_window_end.strftime('%Y-%m-%d'), config)
+            - calculate_accrual_to_date(
+                (year_window_start - timedelta(days=1)).strftime('%Y-%m-%d'), config
+            )
+        )
+        used_days, used_hours = calculate_vacation_usage_in_range(
+            year_window_start, year_window_end, config
+        )
+        if is_hours:
+            used_amount = (used_days * hours_per_day) + used_hours
+        else:
+            used_amount = used_days + (used_hours / hours_per_day)
+
+        balance = max(0.0, carry_balance + year_accrual - used_amount)
+        if year == target.year:
+            return {
+                'accrued': round(carry_balance + year_accrual, 2),
+                'used': round(used_amount, 2),
+                'used_days': round(used_days, 2),
+                'used_hours': round(used_hours, 2),
+                'balance': round(balance, 2),
+                'limit': round(effective_limit, 2),
+                'carry': round(carry_balance, 2)
+            }
+
+        carry_balance = balance
         if not uses_rollover:
-            carry_balance = 0.0          # use-it-or-lose-it
+            carry_balance = 0.0
         elif lose_above_limit and carry_balance > effective_limit:
-            carry_balance = effective_limit  # cap at rollover limit
-
-        year_window_start = date(target.year, 1, 1)
-
-    # --- Year-specific accrual ---
-    accrued_to_target = calculate_accrual_to_date(target_date, config)
-    if year_window_start > accrual_start:
-        dec31_prev_str = (year_window_start - timedelta(days=1)).strftime('%Y-%m-%d')
-        accrued_to_window_start = calculate_accrual_to_date(dec31_prev_str, config)
-        year_accrual = accrued_to_target - accrued_to_window_start
-    else:
-        year_accrual = accrued_to_target
-
-    # --- Year-specific usage ---
-    used_days, used_hours = calculate_vacation_usage_in_range(year_window_start, target, config)
-    if is_hours:
-        used_amount = (used_days * hours_per_day) + used_hours
-    else:
-        used_amount = used_days + (used_hours / hours_per_day)
-
-    balance = carry_balance + year_accrual - used_amount
-    if balance < 0:
-        balance = 0.0
-
-    return {
-        'accrued': round(carry_balance + year_accrual, 2),
-        'used': round(used_amount, 2),
-        'used_days': round(used_days, 2),
-        'used_hours': round(used_hours, 2),
-        'balance': round(balance, 2),
-        'limit': round(effective_limit, 2),
-        'carry': round(carry_balance, 2)
-    }
+            carry_balance = effective_limit
 
 
 def generate_yearly_forecast(year, config):
@@ -304,31 +313,31 @@ def generate_yearly_forecast(year, config):
 def generate_calendar_events(year, config):
     events = []
     us_holidays = get_us_holidays(year)
-    for date, name in sorted(us_holidays.items()):
+    for holiday_date, name in sorted(us_holidays.items()):
         events.append({
-            'date': date.strftime('%Y-%m-%d'),
+            'date': holiday_date.strftime('%Y-%m-%d'),
             'type': 'holiday',
             'name': name,
             'color': '#e74c3c'
         })
     db = get_db()
     rows = db.execute(
-        'SELECT * FROM vacations WHERE start_date LIKE ? OR end_date LIKE ?',
-        (f'{year}%', f'{year}%')
+        'SELECT * FROM vacations WHERE start_date <= ? AND end_date >= ?',
+        (f'{year}-12-31', f'{year}-01-01')
     ).fetchall()
     for row in rows:
         start = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
         end = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
-        for i in range((end - start).days + 1):
-            day = start + timedelta(days=i)
-            if day.year == year:
-                events.append({
-                    'date': day.strftime('%Y-%m-%d'),
-                    'type': 'vacation',
-                    'name': row['name'],
-                    'color': '#3498db',
-                    'vacation_id': row['id']
-                })
+        start = max(start, date(year, 1, 1))
+        end = min(end, date(year, 12, 31))
+        for day in _daterange(start, end):
+            events.append({
+                'date': day.strftime('%Y-%m-%d'),
+                'type': 'vacation',
+                'name': row['name'],
+                'color': '#3498db',
+                'vacation_id': row['id']
+            })
     events.sort(key=lambda x: x['date'])
     return events
 
@@ -366,7 +375,7 @@ def _valid_pto_day(day, holidays_set, reserved_dates, earliest_date, year, holid
     )
 
 
-def _continuous_days_off_count(pto_dates, holidays_set):
+def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=None):
     if not pto_dates:
         return 0
 
@@ -375,14 +384,16 @@ def _continuous_days_off_count(pto_dates, holidays_set):
 
     start = min(pto_dates)
     end = max(pto_dates)
+    min_date = min_date or date(start.year, 1, 1)
+    max_date = max_date or date(end.year, 12, 31)
 
     cursor = start - timedelta(days=1)
-    while is_day_off(cursor):
+    while cursor >= min_date and is_day_off(cursor):
         start = cursor
         cursor -= timedelta(days=1)
 
     cursor = end + timedelta(days=1)
-    while is_day_off(cursor):
+    while cursor <= max_date and is_day_off(cursor):
         end = cursor
         cursor += timedelta(days=1)
 
@@ -397,7 +408,12 @@ def _make_suggestion(start_day, end_day, title, reason, category, holidays_set, 
         if day.weekday() < 5 and (holidays_require_pto or day not in holidays_set)
     ]
     pto_days = len(pto_dates)
-    days_off = _continuous_days_off_count(set(all_dates), holidays_set)
+    days_off = _continuous_days_off_count(
+        set(all_dates),
+        holidays_set,
+        min_date=date(start_day.year, 1, 1),
+        max_date=date(start_day.year, 12, 31)
+    )
     return {
         'name': title,
         'start_date': start_day.strftime('%Y-%m-%d'),
