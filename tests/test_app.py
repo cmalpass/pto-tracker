@@ -10,7 +10,7 @@ from playwright.async_api import async_playwright, Page
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from app import _suggestion_day_metrics, get_us_holidays
+from app import _suggestion_day_metrics, get_holidays
 
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 TEST_YEAR = date.today().year
@@ -45,8 +45,25 @@ async def test_dashboard_loads():
         assert await page.locator("text=Upcoming Trips").is_visible()
         assert await page.locator("text=Scheduled PTO Remaining").is_visible()
         assert await page.locator("#stat-scheduled-pto").is_visible()
-        assert await page.locator("text=Days Left in Year").is_visible()
+        assert await page.locator("text=Calendar Days Left").is_visible()
         print("✅ test_dashboard_loads passed")
+        await browser.close()
+
+
+async def test_dashboard_surfaces_backend_rules():
+    """Verify the dashboard and settings modal expose backend-supported PTO controls."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        assert await page.locator("h2:has-text('PTO Rules')").is_visible()
+        assert await page.locator("text=Accrual type").is_visible()
+        await page.click("#btn-settings")
+        await page.wait_for_timeout(500)
+        assert await page.locator("#start-year").is_visible()
+        assert await page.locator("#cashout-rate").is_visible()
+        assert await page.locator("#grace-period").is_visible()
+        print("✅ test_dashboard_surfaces_backend_rules passed")
         await browser.close()
 
 
@@ -397,8 +414,8 @@ async def test_suggestion_explainability(request_context):
     holiday_metrics = _suggestion_day_metrics(
         date(TEST_YEAR, 7, 2),
         date(TEST_YEAR, 7, 2),
-        set(get_us_holidays(TEST_YEAR)),
-        True,
+        set(get_holidays(TEST_YEAR, {'holiday_country': 'US'})),
+        False,
     )
     assert len(holiday_metrics['holiday_dates']) == 2
     assert len(holiday_metrics['weekday_pto_days']) == 1
@@ -406,8 +423,8 @@ async def test_suggestion_explainability(request_context):
     weekend_metrics = _suggestion_day_metrics(
         date(TEST_YEAR, 9, 4),
         date(TEST_YEAR, 9, 4),
-        set(get_us_holidays(TEST_YEAR)),
-        True,
+        set(get_holidays(TEST_YEAR, {'holiday_country': 'US'})),
+        False,
     )
     assert len(weekend_metrics['weekend_days']) == 2
     assert weekend_metrics['total_days_off'] == 4
@@ -517,6 +534,7 @@ async def main():
     """Run all tests."""
     tests = [
         test_dashboard_loads,
+        test_dashboard_surfaces_backend_rules,
         test_add_vacation,
         test_calendar_shows_holidays,
         test_forecast_table,
