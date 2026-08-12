@@ -162,6 +162,7 @@ async def test_chart_rendering():
 
 async def test_multi_year_forecast_and_heatmap(request_context):
     """Verify bounded multi-year forecast and weekly impact data."""
+    headers = await csrf_headers(request_context)
     forecast = await request_context.get(
         f'/api/forecast/multi-year?start_year={TEST_YEAR}&years=3'
     )
@@ -179,7 +180,7 @@ async def test_multi_year_forecast_and_heatmap(request_context):
     holiday_weeks = [week for week in heatmap_data['weeks'] if week['holidays']]
     assert holiday_weeks and max(week['score'] for week in holiday_weeks) > 0
 
-    vacation = await request_context.post('/api/vacations', data={
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
         'name': 'Heatmap Test',
         'start_date': f'{TEST_YEAR}-11-02',
         'end_date': f'{TEST_YEAR}-11-02',
@@ -283,11 +284,12 @@ async def test_export_and_note_validation(request_context):
 
 async def test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days(request_context):
     """Verify stats keep the entry count while exposing scheduled PTO days."""
+    headers = await csrf_headers(request_context)
     start_date = date.today() + timedelta(days=7)
     while start_date.weekday() != 0:
         start_date += timedelta(days=1)
     end_date = start_date + timedelta(days=4)
-    vacation = await request_context.post('/api/vacations', data={
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
         'name': 'Stats Regression',
         'start_date': start_date.isoformat(),
         'end_date': end_date.isoformat(),
