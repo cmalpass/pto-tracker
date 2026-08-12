@@ -8,6 +8,7 @@ import hmac
 import secrets
 import logging
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
@@ -20,6 +21,7 @@ DATABASE = os.environ.get(
     os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
 )
 logger = logging.getLogger(__name__)
+DEFAULT_TIMEZONE = 'UTC'
 
 NUMERIC_CONFIG_KEYS = {
     'pto_accrual_per_pay_period',
@@ -49,6 +51,7 @@ VALID_CONFIG_KEYS = {
     'pto_start_year',
     'pto_vesting_schedule',
     'pto_grace_period_days',
+    'timezone',
 }
 
 
@@ -59,16 +62,42 @@ def default_config():
         'pto_hours_per_day': '8',
         'pto_holidays_require_pto': 'true',
         'pay_periods_per_year': '26',
-        'accrual_start_date': f'{datetime.now().year}-01-01',
+        'accrual_start_date': f'{datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).year}-01-01',
         'accrual_method': 'pro-rata',
         'pto_carryover_limit': '40',
         'pto_uses_rollover': 'true',
         'pto_cashout_rate': '0',
         'pto_lose_above_limit': 'true',
-        'pto_start_year': str(datetime.now().year),
+        'pto_start_year': str(datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).year),
         'pto_vesting_schedule': 'immediate',
         'pto_grace_period_days': '0',
+        'timezone': DEFAULT_TIMEZONE,
     }
+
+
+def get_configured_timezone(config=None):
+    """Return the configured timezone, falling back safely to UTC."""
+    timezone_name = (config or {}).get('timezone', DEFAULT_TIMEZONE)
+    if not isinstance(timezone_name, str):
+        timezone_name = DEFAULT_TIMEZONE
+    timezone_name = timezone_name.strip()
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning('Invalid timezone config %r; using %s', timezone_name, DEFAULT_TIMEZONE)
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def get_local_now(config=None):
+    return datetime.now(get_configured_timezone(config))
+
+
+def get_local_today(config=None):
+    return get_local_now(config).date()
+
+
+def get_local_year(config=None):
+    return get_local_now(config).year
 
 
 def get_db():
@@ -136,6 +165,12 @@ def get_config():
                 config[key] = fallback
         elif key in BOOLEAN_CONFIG_KEYS:
             config[key] = value.lower() == 'true'
+        elif key == 'timezone':
+            try:
+                config[key] = ZoneInfo(str(value).strip()).key
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning('Invalid timezone config %r; using %s', value, DEFAULT_TIMEZONE)
+                config[key] = DEFAULT_TIMEZONE
         else:
             config[key] = value
     return config
@@ -621,7 +656,7 @@ def generate_vacation_suggestions(year, config):
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
 
-    today = datetime.now().date()
+    today = get_local_today(config)
     year_start = date(year, 1, 1)
     year_end = date(year, 12, 31)
     earliest = max(today, year_start)
@@ -824,7 +859,12 @@ def index():
 
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
-    return jsonify(get_config())
+    config = get_config()
+    return jsonify({
+        **config,
+        'current_date': get_local_today(config).isoformat(),
+        'current_year': get_local_year(config),
+    })
 
 
 @app.route('/api/config', methods=['PUT'])
@@ -854,6 +894,13 @@ def api_update_config():
                 validated[key] = value.strip().lower()
             else:
                 return jsonify({'error': f'{key} must be boolean'}), 400
+        elif key == 'timezone':
+            if not isinstance(value, str) or not value.strip():
+                return jsonify({'error': 'timezone must be a valid IANA timezone'}), 400
+            try:
+                validated[key] = ZoneInfo(value.strip()).key
+            except (ZoneInfoNotFoundError, ValueError):
+                return jsonify({'error': 'timezone must be a valid IANA timezone'}), 400
         else:
             validated[key] = str(value)
 
@@ -874,8 +921,8 @@ def api_get_balance(date):
 
 @app.route('/api/balance', methods=['GET'])
 def api_get_balance_range():
-    year = request.args.get('year', str(datetime.now().year), type=int)
     config = get_config()
+    year = request.args.get('year', str(get_local_year(config)), type=int)
     forecast = generate_yearly_forecast(year, config)
     return jsonify({'year': year, 'forecast': forecast})
 
@@ -955,10 +1002,10 @@ def api_calculate_vacation_days():
 
 @app.route('/api/vacations/suggestions', methods=['GET'])
 def api_get_vacation_suggestions():
-    year = request.args.get('year', datetime.now().year, type=int)
+    config = get_config()
+    year = request.args.get('year', get_local_year(config), type=int)
     if year < 2000 or year > 2100:
         return jsonify({'error': 'year must be between 2000 and 2100'}), 400
-    config = get_config()
     payload = generate_vacation_suggestions(year, config)
     return jsonify(payload)
 
@@ -1077,10 +1124,10 @@ def api_get_month_calendar(year, month):
 @app.route('/api/stats', methods=['GET'])
 def api_get_stats():
     config = get_config()
-    today_date = datetime.now().date()
+    today_date = get_local_today(config)
     today = today_date.strftime('%Y-%m-%d')
     balance = calculate_balance_on_date(today, config)
-    forecast = generate_yearly_forecast(datetime.now().year, config)
+    forecast = generate_yearly_forecast(get_local_year(config), config)
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
     year_end = date(today_date.year, 12, 31)
@@ -1213,8 +1260,8 @@ def api_delete_note(note_id):
 def _export_rows():
     db = get_db()
     config = get_config()
-    year = datetime.now().year
-    today = datetime.now().date().strftime('%Y-%m-%d')
+    year = get_local_year(config)
+    today = get_local_today(config).strftime('%Y-%m-%d')
     return config, calculate_balance_on_date(today, config), db.execute(
         'SELECT name, start_date, end_date, days, hours FROM vacations ORDER BY start_date'
     ).fetchall(), generate_yearly_forecast(year, config), year
