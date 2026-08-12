@@ -192,11 +192,37 @@ function setupCalendar() {
     });
 }
 
+function expandCalendarEvents(events, year, month) {
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month + 1, 0);
+    const expanded = [];
+    (Array.isArray(events) ? events : []).forEach(event => {
+        if (event.date) {
+            expanded.push(event);
+            return;
+        }
+        if (!event.start_date || !event.end_date) return;
+        const start = parseIsoDateToLocal(event.start_date);
+        const end = parseIsoDateToLocal(event.end_date);
+        const overlapStart = start > monthStart ? start : monthStart;
+        const overlapEnd = end < monthEnd ? end : monthEnd;
+        for (const day = new Date(overlapStart); day <= overlapEnd; day.setDate(day.getDate() + 1)) {
+            expanded.push({ ...event, date: toIsoDate(day) });
+        }
+    });
+    return expanded;
+}
+
 async function renderCalendar() {
     const title = `${MONTHS[state.currentMonth]} ${state.currentYear}`;
     document.getElementById('calendar-title').textContent = title;
     try {
-        const events = await API.get(`/api/calendar/${state.currentYear}/${state.currentMonth + 1}`);
+        const response = await API.get(`/api/calendar/${state.currentYear}/${state.currentMonth + 1}`);
+        const monthEvents = expandCalendarEvents(
+            response.events,
+            state.currentYear,
+            state.currentMonth
+        );
         const container = document.getElementById('calendar-grid');
         let html = `<div class="cal-header">${DAYS.map(d => `<span>${d}</span>`).join('')}</div>`;
         const firstDay = new Date(state.currentYear, state.currentMonth, 1).getDay();
@@ -210,7 +236,7 @@ async function renderCalendar() {
             let classes = 'cal-day';
             const dateStr = `${state.currentYear}-${String(state.currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             if (today.getDate() === d && today.getMonth() === state.currentMonth && today.getFullYear() === state.currentYear) classes += ' today';
-            const dayEvents = events.events.filter(e => e.date === dateStr);
+            const dayEvents = monthEvents.filter(e => e.date === dateStr);
             if (dayEvents.some(e => e.type === 'holiday')) classes += ' holiday';
             if (dayEvents.some(e => e.type === 'vacation')) classes += ' vacation';
             html += `<div class="${classes}" data-date="${dateStr}"><span class="day-number">${d}</span>`;
@@ -699,7 +725,12 @@ async function loadForecast() {
         const data = await API.get(`/api/balance?year=${state.currentYear}`);
         if (requestId !== state.forecastRequestId) return;
         state.forecast = data.forecast || [];
-        renderForecastChart();
+        try {
+            renderForecastChart();
+        } catch (chartErr) {
+            console.error('Failed to render chart:', chartErr);
+            showToast('Failed to render forecast chart', 'error');
+        }
         renderForecastTable();
     } catch (err) {
         console.error('Failed to load forecast:', err);
