@@ -145,6 +145,28 @@ async def test_policy_presets(request_context):
     assert config['pto_uses_rollover'] is True
 
 
+async def test_settings_survive_preset_failure():
+    """Verify settings remain usable when the optional preset endpoint fails."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.route(
+            "**/api/config/presets",
+            lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":"temporarily unavailable"}',
+            ),
+        )
+        await page.goto(BASE_URL)
+        await page.click("#btn-settings")
+        await page.wait_for_timeout(500)
+        assert await page.locator("#settings-modal").is_visible()
+        assert await page.locator("button:has-text('Save Settings')").is_visible()
+        assert await page.locator("#policy-preset").is_disabled()
+        await browser.close()
+
+
 async def test_chart_rendering():
     """Verify forecast chart displays data."""
     async with async_playwright() as p:
@@ -293,6 +315,7 @@ async def run_isolated_tests():
         test_forecast_table,
         test_settings_save,
         test_policy_presets,
+        test_settings_survive_preset_failure,
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,

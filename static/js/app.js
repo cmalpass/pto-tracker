@@ -717,8 +717,11 @@ async function openSettings() {
     try {
         const config = await API.get('/api/config');
         state.config = config;
-        await loadPolicyPresets();
         resetPolicyPreview();
+        loadPolicyPresets().catch((err) => {
+            console.warn('Policy presets unavailable:', err);
+            disablePolicyWizard();
+        });
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
         document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
@@ -742,11 +745,25 @@ function closeSettings() {
 async function loadPolicyPresets() {
     const presets = await API.get('/api/config/presets');
     const select = document.getElementById('policy-preset');
+    document.querySelector('.policy-wizard').removeAttribute('aria-disabled');
+    select.disabled = false;
+    document.getElementById('btn-preview-policy').disabled = false;
     select.replaceChildren(new Option('Choose a policy preset', ''));
     Object.entries(presets).forEach(([id, preset]) => {
         select.add(new Option(preset.name, id));
     });
     state.policyPresets = presets;
+}
+
+function disablePolicyWizard() {
+    const wizard = document.querySelector('.policy-wizard');
+    wizard.setAttribute('aria-disabled', 'true');
+    document.getElementById('policy-preset').disabled = true;
+    document.getElementById('btn-preview-policy').disabled = true;
+    document.getElementById('btn-apply-policy').hidden = true;
+    const preview = document.getElementById('policy-preview');
+    preview.textContent = 'Policy presets are temporarily unavailable. You can still edit and save settings below.';
+    preview.hidden = false;
 }
 
 function resetPolicyPreview() {
