@@ -276,6 +276,8 @@ def calculate_vacation_usage_in_range(range_start, range_end, config):
     ).fetchall()
     total_days = 0.0
     total_hours = 0.0
+    claimed_dates = set()
+    holidays_by_year = {}
     for row in rows:
         vac_start = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
         vac_end = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
@@ -283,36 +285,70 @@ def calculate_vacation_usage_in_range(range_start, range_end, config):
         eff_end = min(vac_end, range_end)
         if eff_start > eff_end:
             continue
-        if eff_start == vac_start and eff_end == vac_end:
-            # Entirely within range — use stored (authoritative) values
+        row_dates = list(_daterange(eff_start, eff_end))
+        unique_dates = [day for day in row_dates if day not in claimed_dates]
+        unique_start = vac_start >= range_start and vac_start <= range_end and vac_start not in claimed_dates
+        claimed_dates.update(row_dates)
+
+        # Attribute each stored booking only to dates not already covered by an
+        # earlier booking. This keeps legacy overlapping rows from double-counting.
+        total_business_days = get_vacation_days(
+            vac_start.strftime('%Y-%m-%d'),
+            vac_end.strftime('%Y-%m-%d'),
+            config
+        )
+        unique_business_days = sum(
+            is_business_day(day)
+            and (config.get('pto_holidays_require_pto', True) or
+                 day not in holidays_by_year.setdefault(day.year, set(get_us_holidays(day.year))))
+            for day in unique_dates
+        )
+        if total_business_days > 0:
+            total_days += row['days'] * (unique_business_days / total_business_days)
+        elif unique_start:
             total_days += row['days']
+
+        # Partial-hour PTO is attached to the booking's start date.
+        if unique_start:
             total_hours += row['hours']
-        else:
-            # Partially within range: apportion stored row['days'] by overlap ratio
-            # so split ranges never consume more than the saved entry total.
-            total_business_days = get_vacation_days(
-                vac_start.strftime('%Y-%m-%d'),
-                vac_end.strftime('%Y-%m-%d'),
-                config
-            )
-            overlap_business_days = get_vacation_days(
-                eff_start.strftime('%Y-%m-%d'),
-                eff_end.strftime('%Y-%m-%d'),
-                config
-            )
-
-            if total_business_days > 0:
-                total_days += row['days'] * (overlap_business_days / total_business_days)
-            elif vac_start >= range_start:
-                # Degenerate edge case: no business days in range. Attribute manual
-                # override to the range containing the start date.
-                total_days += row['days']
-
-            # Partial-hour PTO is always a single day; only attribute hours when
-            # the vacation's start date falls inside this range.
-            if vac_start >= range_start:
-                total_hours += row['hours']
     return total_days, total_hours
+
+
+def _vacation_conflicts(start_date, end_date, exclude_id=None):
+    """Return existing vacation rows whose inclusive ranges overlap."""
+    db = get_db()
+    query = (
+        'SELECT id, name, start_date, end_date, days, hours FROM vacations '
+        'WHERE start_date <= ? AND end_date >= ?'
+    )
+    params = [end_date, start_date]
+    if exclude_id is not None:
+        query += ' AND id != ?'
+        params.append(exclude_id)
+    query += ' ORDER BY start_date, id'
+    return db.execute(query, params).fetchall()
+
+
+def _conflict_response(conflicts):
+    details = [
+        {
+            'id': row['id'],
+            'name': row['name'],
+            'start_date': row['start_date'],
+            'end_date': row['end_date'],
+            'days': row['days'],
+            'hours': row['hours'],
+        }
+        for row in conflicts
+    ]
+    descriptions = ', '.join(
+        f"{item['name']} ({item['start_date']} to {item['end_date']})"
+        for item in details
+    )
+    return jsonify({
+        'error': f'Vacation dates overlap existing vacation(s): {descriptions}',
+        'conflicts': details,
+    }), 409
 
 
 def calculate_balance_on_date(target_date, config):
@@ -857,6 +893,9 @@ def api_add_vacation():
         datetime.strptime(end_date, '%Y-%m-%d')
     except ValueError:
         return jsonify({'error': 'Dates must use yyyy-mm-dd format'}), 400
+    conflicts = _vacation_conflicts(start_date, end_date)
+    if conflicts:
+        return _conflict_response(conflicts)
     auto_days = parse_bool(data.get('auto_days', True), default=True)
     if auto_days:
         days = get_vacation_days(start_date, end_date, config)
@@ -930,6 +969,9 @@ def api_update_vacation(vacation_id):
         datetime.strptime(end_date, '%Y-%m-%d')
     except ValueError:
         return jsonify({'error': 'Dates must use yyyy-mm-dd format'}), 400
+    conflicts = _vacation_conflicts(start_date, end_date, exclude_id=vacation_id)
+    if conflicts:
+        return _conflict_response(conflicts)
 
     config = get_config()
     auto_days = parse_bool(data.get('auto_days', True), default=True)
@@ -1030,26 +1072,10 @@ def api_get_stats():
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
     year_end = date(today_date.year, 12, 31)
-    remaining_vacations = 0
-    remaining_hours = 0
     hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
-    for v in vacations:
-        start = datetime.strptime(v['start_date'], '%Y-%m-%d').date()
-        end = datetime.strptime(v['end_date'], '%Y-%m-%d').date()
-        if start > year_end or end < today_date:
-            continue
-        if start >= today_date:
-            remaining_vacations += v['days']
-            remaining_hours += v['hours']
-            continue
-
-        overlap_end = min(end, year_end)
-        total_days = get_vacation_days(v['start_date'], v['end_date'], config)
-        remaining_days = get_vacation_days(today, overlap_end.strftime('%Y-%m-%d'), config)
-        if total_days > 0:
-            remaining_vacations += v['days'] * (remaining_days / total_days)
-        if start >= today_date:
-            remaining_hours += v['hours']
+    remaining_vacations, remaining_hours = calculate_vacation_usage_in_range(
+        today_date, year_end, config
+    )
     if config.get('pto_accrual_type') == 'hours':
         remaining_total = (remaining_vacations * hours_per_day) + remaining_hours
     else:
