@@ -521,8 +521,18 @@ def _valid_pto_day(day, holidays_set, reserved_dates, earliest_date, year, holid
 
 
 def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=None):
-    if not pto_dates:
+    interval = _continuous_days_off_interval(
+        pto_dates, holidays_set, min_date=min_date, max_date=max_date
+    )
+    if not interval:
         return 0
+    start, end = interval
+    return (end - start).days + 1
+
+
+def _continuous_days_off_interval(pto_dates, holidays_set, min_date=None, max_date=None):
+    if not pto_dates:
+        return None
 
     def is_day_off(check_day):
         return (check_day.weekday() >= 5) or (check_day in holidays_set) or (check_day in pto_dates)
@@ -542,7 +552,7 @@ def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=
         end = cursor
         cursor += timedelta(days=1)
 
-    return (end - start).days + 1
+    return start, end
 
 
 def _suggestion_day_metrics(start_day, end_day, holidays_set, holidays_require_pto):
@@ -552,32 +562,39 @@ def _suggestion_day_metrics(start_day, end_day, holidays_set, holidays_require_p
         for day in all_dates
         if day.weekday() < 5 and (holidays_require_pto or day not in holidays_set)
     ]
-    holiday_dates = [day for day in all_dates if day in holidays_set]
-    weekend_days = [
-        day for day in all_dates
-        if day.weekday() >= 5 and day not in holidays_set
-    ]
-    pto_date_set = set(pto_dates)
-    non_pto_weekday_days = [
-        day for day in all_dates
-        if day.weekday() < 5
-        and day.strftime('%Y-%m-%d') not in pto_date_set
-        and day not in holidays_set
-    ]
-    days_off = _continuous_days_off_count(
+    off_interval = _continuous_days_off_interval(
         set(all_dates),
         holidays_set,
         min_date=date(start_day.year, 1, 1),
         max_date=date(start_day.year, 12, 31)
     )
+    expanded_dates = list(_daterange(*off_interval)) if off_interval else all_dates
+    holiday_dates = [day for day in expanded_dates if day in holidays_set]
+    weekend_days = [
+        day for day in expanded_dates
+        if day.weekday() >= 5 and day not in holidays_set
+    ]
+    pto_date_set = set(pto_dates)
+    non_pto_weekday_days = [
+        day for day in expanded_dates
+        if day.weekday() < 5
+        and day.strftime('%Y-%m-%d') not in pto_date_set
+        and day not in holidays_set
+    ]
+    weekday_pto_days = [
+        day for day in expanded_dates
+        if day.strftime('%Y-%m-%d') in pto_date_set
+        and day not in holidays_set
+    ]
     return {
-        'all_dates': all_dates,
+        'all_dates': expanded_dates,
         'pto_dates': pto_dates,
         'pto_days': len(pto_dates),
         'holiday_dates': holiday_dates,
         'weekend_days': weekend_days,
         'non_pto_weekday_days': non_pto_weekday_days,
-        'total_days_off': days_off,
+        'weekday_pto_days': weekday_pto_days,
+        'total_days_off': len(expanded_dates),
     }
 
 
@@ -587,7 +604,7 @@ def _build_explanation(start_day, end_day, metrics, holidays_map,
     total_days_off = metrics['total_days_off']
     impact_score = total_days_off / pto_days if pto_days else 0
     breakdown = {
-        'weekday_pto_days': pto_days,
+        'weekday_pto_days': len(metrics['weekday_pto_days']),
         'weekend_days': len(metrics['weekend_days']),
         'holiday_days': len(metrics['holiday_dates']),
         'non_pto_weekday_days': len(metrics['non_pto_weekday_days']),

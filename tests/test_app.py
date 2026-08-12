@@ -9,6 +9,8 @@ from playwright.async_api import async_playwright, Page
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from app import _suggestion_day_metrics, get_us_holidays
+
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 TEST_YEAR = date.today().year
 
@@ -236,14 +238,39 @@ async def test_suggestion_explainability(request_context):
             'holiday_days',
             'non_pto_weekday_days',
         )
-    ) == (
-        (date.fromisoformat(suggestion['end_date'])
-         - date.fromisoformat(suggestion['start_date'])).days + 1
-    )
+    ) == suggestion['total_days_off']
     assert explanation['score_formula']
     assert 'policy_assumptions' in explanation
     assert 'constraints' in explanation
     assert 'ranking_factors' in explanation
+    for item in payload['suggestions']:
+        item_breakdown = item['explanation']['breakdown']
+        assert sum(
+            item_breakdown[key] for key in (
+                'weekday_pto_days',
+                'weekend_days',
+                'holiday_days',
+                'non_pto_weekday_days',
+            )
+        ) == item['total_days_off']
+
+    holiday_metrics = _suggestion_day_metrics(
+        date(TEST_YEAR, 7, 2),
+        date(TEST_YEAR, 7, 2),
+        set(get_us_holidays(TEST_YEAR)),
+        True,
+    )
+    assert len(holiday_metrics['holiday_dates']) == 2
+    assert len(holiday_metrics['weekday_pto_days']) == 1
+    assert holiday_metrics['total_days_off'] == 4
+    weekend_metrics = _suggestion_day_metrics(
+        date(TEST_YEAR, 9, 4),
+        date(TEST_YEAR, 9, 4),
+        set(get_us_holidays(TEST_YEAR)),
+        True,
+    )
+    assert len(weekend_metrics['weekend_days']) == 2
+    assert weekend_metrics['total_days_off'] == 4
 
     page = await request_context.get('/')
     assert page.status == 200
