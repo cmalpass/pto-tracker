@@ -144,6 +144,7 @@ async def test_settings_save():
 
 async def test_policy_presets(request_context):
     """Verify presets are safe to preview and persist through the config API."""
+    headers = await csrf_headers(request_context)
     response = await request_context.get('/api/config/presets')
     assert response.status == 200
     presets = await response.json()
@@ -151,7 +152,7 @@ async def test_policy_presets(request_context):
     preset = presets['standard']['settings']
     assert preset['pto_accrual_type'] == 'days'
     assert preset['pay_periods_per_year'] == 26
-    saved = await request_context.put('/api/config', data=preset)
+    saved = await request_context.put('/api/config', headers=headers, data=preset)
     assert saved.status == 200
     config = await (await request_context.get('/api/config')).json()
     assert config['pto_accrual_type'] == 'days'
@@ -274,11 +275,12 @@ async def test_export_and_note_validation(request_context):
 
 async def test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days(request_context):
     """Verify stats keep the entry count while exposing scheduled PTO days."""
+    headers = await csrf_headers(request_context)
     start_date = date.today() + timedelta(days=7)
     while start_date.weekday() != 0:
         start_date += timedelta(days=1)
     end_date = start_date + timedelta(days=4)
-    vacation = await request_context.post('/api/vacations', data={
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
         'name': 'Stats Regression',
         'start_date': start_date.isoformat(),
         'end_date': end_date.isoformat(),
