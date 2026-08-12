@@ -150,7 +150,10 @@ const state = {
     currentMonth: new Date().getMonth(),
     today: null,
     forecastChart: null,
+    multiYearChart: null,
     forecastRequestId: 0,
+    multiYearRequestId: 0,
+    heatmapRequestId: 0,
     editingVacationId: null,
     vacationCalcRequestId: 0,
     vacationSuggestions: null,
@@ -180,6 +183,7 @@ function setupTabs() {
             tab.classList.add('active');
             document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
             if (tab.dataset.tab === 'calendar') renderCalendar();
+            else if (tab.dataset.tab === 'heatmap') loadHeatmap();
             else if (tab.dataset.tab === 'forecast') loadForecast();
             else if (tab.dataset.tab === 'vacations') loadVacations();
         });
@@ -1012,9 +1016,144 @@ async function loadForecast() {
             showToast('Failed to render forecast chart', 'error');
         }
         renderForecastTable();
+        await loadMultiYearForecast();
     } catch (err) {
         console.error('Failed to load forecast:', err);
         showToast('Failed to load forecast', 'error');
+    }
+}
+
+async function loadMultiYearForecast() {
+    const startSelect = document.getElementById('multi-year-start');
+    const countSelect = document.getElementById('multi-year-count');
+    if (!startSelect || !countSelect) return;
+    if (!startSelect.dataset.listenerAttached) {
+        startSelect.dataset.listenerAttached = 'true';
+        startSelect.addEventListener('change', loadMultiYearForecast);
+        countSelect.addEventListener('change', loadMultiYearForecast);
+    }
+    const requestId = ++state.multiYearRequestId;
+    const stateEl = document.getElementById('multi-year-state');
+    try {
+        const data = await API.get(
+            `/api/forecast/multi-year?start_year=${startSelect.value}&years=${countSelect.value}`
+        );
+        if (requestId !== state.multiYearRequestId) return;
+        renderMultiYearSummary(data.years || []);
+        renderMultiYearChart(data.years || []);
+    } catch (err) {
+        console.error('Failed to load multi-year forecast:', err);
+        stateEl.textContent = 'Multi-year forecast is unavailable right now.';
+        stateEl.hidden = false;
+        document.getElementById('multi-year-summary').hidden = true;
+        document.getElementById('multi-year-chart-container').hidden = true;
+    }
+}
+
+function renderMultiYearSummary(years) {
+    const stateEl = document.getElementById('multi-year-state');
+    const container = document.getElementById('multi-year-summary');
+    if (!years.length) {
+        stateEl.textContent = 'No multi-year forecast data is available.';
+        stateEl.hidden = false;
+        container.hidden = true;
+        return;
+    }
+    stateEl.hidden = true;
+    container.hidden = false;
+    container.innerHTML = years.map((entry, index) => `
+        <div class="year-column">
+            <h3>${entry.year}</h3>
+            <div class="year-metric"><span>Accrued</span><strong>${Number(entry.total_accrued).toFixed(1)}</strong></div>
+            <div class="year-metric"><span>Used</span><strong>${Number(entry.total_used).toFixed(1)}</strong></div>
+            <div class="year-metric"><span>Year-end balance</span><strong>${Number(entry.year_end_balance).toFixed(1)}</strong></div>
+            <div class="year-metric"><span>Carryover</span><strong>${Number(entry.carryover).toFixed(1)}</strong></div>
+            <div class="year-metric forfeit-metric"><span>Forfeited</span><strong>${Number(entry.forfeited).toFixed(1)}</strong></div>
+            ${index < years.length - 1 ? `<div class="rollover-arrow" title="${Number(entry.carryover).toFixed(1)} carries into ${years[index + 1].year}">&#8594;</div>` : ''}
+        </div>
+    `).join('');
+}
+
+function renderMultiYearChart(years) {
+    const canvas = document.getElementById('multi-year-chart');
+    const chartContainer = document.getElementById('multi-year-chart-container');
+    if (!canvas || !years.length || typeof Chart === 'undefined') return;
+    if (state.multiYearChart) state.multiYearChart.destroy();
+    chartContainer.hidden = false;
+    const colors = ['#6366f1', '#10b981', '#f59e0b'];
+    state.multiYearChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: MONTHS.map(month => month.substring(0, 3)),
+            datasets: years.map((entry, index) => ({
+                label: String(entry.year),
+                data: entry.monthly_balances.map(month => month.balance),
+                borderColor: colors[index % colors.length],
+                backgroundColor: colors[index % colors.length],
+                tension: 0.3,
+                pointRadius: 3,
+                fill: false
+            }))
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top' } },
+            scales: { y: { beginAtZero: true, title: { display: true, text: 'Balance' } } }
+        }
+    });
+}
+
+async function loadHeatmap() {
+    const select = document.getElementById('heatmap-year');
+    if (!select) return;
+    if (!select.dataset.listenerAttached) {
+        select.dataset.listenerAttached = 'true';
+        select.addEventListener('change', loadHeatmap);
+    }
+    const requestId = ++state.heatmapRequestId;
+    const stateEl = document.getElementById('heatmap-state');
+    const grid = document.getElementById('heatmap-grid');
+    const legend = document.getElementById('heatmap-legend');
+    try {
+        const data = await API.get(`/api/heatmap/${select.value}`);
+        if (requestId !== state.heatmapRequestId) return;
+        if (!data.weeks?.length) {
+            stateEl.textContent = 'No heatmap data is available for this year.';
+            stateEl.hidden = false;
+            grid.hidden = true;
+            legend.hidden = true;
+            return;
+        }
+        stateEl.hidden = true;
+        grid.hidden = false;
+        grid.innerHTML = data.weeks.map(week => {
+            const intensity = data.max_score === data.min_score
+                ? 0.25
+                : (week.score - data.min_score) / (data.max_score - data.min_score);
+            const color = `hsl(${Math.round(210 - intensity * 175)}, 85%, ${Math.round(88 - intensity * 35)}%)`;
+            const holidayText = week.holidays.length ? week.holidays.join(', ') : 'No holidays';
+            return `<button class="heatmap-cell${week.already_booked ? ' booked' : ''}" style="--heatmap-color:${color}" title="Week ${week.week_number}: ${week.start_date} to ${week.end_date}\nScore: ${week.score.toFixed(2)}\n${holidayText}" data-date="${week.start_date}" aria-label="Week ${week.week_number}, score ${week.score.toFixed(2)}">${week.week_number}</button>`;
+        }).join('');
+        legend.hidden = false;
+        legend.innerHTML = '<span>Lower value</span><span class="heatmap-gradient"></span><span>Higher value</span><span class="heatmap-legend-note">Score = days off per PTO day</span>';
+        grid.querySelectorAll('.heatmap-cell').forEach(cell => cell.addEventListener('click', () => {
+            const heatmapYear = Number(select.value);
+            const day = parseIsoDateToLocal(cell.dataset.date);
+            if (day.getFullYear() !== heatmapYear) {
+                day.setFullYear(heatmapYear, day < new Date(heatmapYear, 0, 1) ? 0 : 11,
+                    day < new Date(heatmapYear, 0, 1) ? 1 : 31);
+            }
+            state.currentYear = day.getFullYear();
+            state.currentMonth = day.getMonth();
+            document.querySelector('.nav-tab[data-tab="calendar"]').click();
+        }));
+    } catch (err) {
+        console.error('Failed to load heatmap:', err);
+        stateEl.textContent = 'Heatmap is unavailable right now.';
+        stateEl.hidden = false;
+        grid.hidden = true;
+        legend.hidden = true;
     }
 }
 

@@ -225,6 +225,54 @@ async def test_chart_rendering():
         await browser.close()
 
 
+async def test_multi_year_forecast_and_heatmap(request_context):
+    """Verify bounded multi-year forecast and weekly impact data."""
+    headers = await csrf_headers(request_context)
+    forecast = await request_context.get(
+        f'/api/forecast/multi-year?start_year={TEST_YEAR}&years=3'
+    )
+    assert forecast.status == 200
+    forecast_data = await forecast.json()
+    assert len(forecast_data['years']) == 3
+    assert all(len(entry['monthly_balances']) == 12 for entry in forecast_data['years'])
+    assert all('carryover' in entry and 'forfeited' in entry for entry in forecast_data['years'])
+
+    heatmap = await request_context.get(f'/api/heatmap/{TEST_YEAR}')
+    assert heatmap.status == 200
+    heatmap_data = await heatmap.json()
+    assert len(heatmap_data['weeks']) in (52, 53)
+    assert heatmap_data['max_score'] >= heatmap_data['min_score']
+    holiday_weeks = [week for week in heatmap_data['weeks'] if week['holidays']]
+    assert holiday_weeks and max(week['score'] for week in holiday_weeks) > 0
+
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
+        'name': 'Heatmap Test',
+        'start_date': f'{TEST_YEAR}-11-02',
+        'end_date': f'{TEST_YEAR}-11-02',
+        'auto_days': True,
+    })
+    assert vacation.status == 201
+    booked_heatmap = await request_context.get(f'/api/heatmap/{TEST_YEAR}')
+    assert any(week['already_booked'] for week in (await booked_heatmap.json())['weeks'])
+
+
+async def test_heatmap_boundary_navigation():
+    """Verify boundary heatmap weeks stay within the selected calendar year."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        await page.click("button:has-text('Best Weeks')")
+        await page.wait_for_selector(".heatmap-cell", timeout=10000)
+        await page.locator(".heatmap-cell").first.click()
+        assert str(TEST_YEAR) in (await page.locator("#calendar-title").text_content())
+        await page.click("button:has-text('Best Weeks')")
+        await page.wait_for_selector(".heatmap-cell", timeout=10000)
+        await page.locator(".heatmap-cell").last.click()
+        assert str(TEST_YEAR) in (await page.locator("#calendar-title").text_content())
+        await browser.close()
+
+
 async def test_days_remaining_ignores_dst():
     """Verify date-only year arithmetic is stable across a DST transition."""
     async with async_playwright() as p:
@@ -402,6 +450,7 @@ async def main():
         test_forecast_table,
         test_settings_save,
         test_chart_rendering,
+        test_heatmap_boundary_navigation,
         test_days_remaining_ignores_dst,
         test_delete_vacation,
         test_export_and_note_validation,
@@ -458,6 +507,8 @@ async def run_isolated_tests():
         test_settings_survive_preset_failure,
         test_holiday_country_configuration,
         test_chart_rendering,
+        test_multi_year_forecast_and_heatmap,
+        test_heatmap_boundary_navigation,
         test_days_remaining_ignores_dst,
         test_delete_vacation,
         test_export_and_note_validation,
@@ -476,6 +527,7 @@ async def run_isolated_tests():
                     if test in {
                         test_policy_presets,
                         test_export_and_note_validation,
+                        test_multi_year_forecast_and_heatmap,
                         test_holiday_country_configuration,
                         test_smart_warnings_and_suggestion_filters,
                         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
