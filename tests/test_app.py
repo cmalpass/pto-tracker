@@ -160,6 +160,36 @@ async def test_chart_rendering():
         await browser.close()
 
 
+async def test_multi_year_forecast_and_heatmap(request_context):
+    """Verify bounded multi-year forecast and weekly impact data."""
+    forecast = await request_context.get(
+        f'/api/forecast/multi-year?start_year={TEST_YEAR}&years=3'
+    )
+    assert forecast.status == 200
+    forecast_data = await forecast.json()
+    assert len(forecast_data['years']) == 3
+    assert all(len(entry['monthly_balances']) == 12 for entry in forecast_data['years'])
+    assert all('carryover' in entry and 'forfeited' in entry for entry in forecast_data['years'])
+
+    heatmap = await request_context.get(f'/api/heatmap/{TEST_YEAR}')
+    assert heatmap.status == 200
+    heatmap_data = await heatmap.json()
+    assert len(heatmap_data['weeks']) in (52, 53)
+    assert heatmap_data['max_score'] >= heatmap_data['min_score']
+    holiday_weeks = [week for week in heatmap_data['weeks'] if week['holidays']]
+    assert holiday_weeks and max(week['score'] for week in holiday_weeks) > 0
+
+    vacation = await request_context.post('/api/vacations', data={
+        'name': 'Heatmap Test',
+        'start_date': f'{TEST_YEAR}-11-02',
+        'end_date': f'{TEST_YEAR}-11-02',
+        'auto_days': True,
+    })
+    assert vacation.status == 201
+    booked_heatmap = await request_context.get(f'/api/heatmap/{TEST_YEAR}')
+    assert any(week['already_booked'] for week in (await booked_heatmap.json())['weeks'])
+
+
 async def test_delete_vacation():
     """Verify vacation deletion works end-to-end."""
     async with async_playwright() as p:
@@ -314,6 +344,7 @@ async def run_isolated_tests():
         test_forecast_table,
         test_settings_save,
         test_chart_rendering,
+        test_multi_year_forecast_and_heatmap,
         test_delete_vacation,
         test_export_and_note_validation,
         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
@@ -328,6 +359,7 @@ async def run_isolated_tests():
                 try:
                     if test in {
                         test_export_and_note_validation,
+                        test_multi_year_forecast_and_heatmap,
                         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
                     }:
                         await test(request_context)

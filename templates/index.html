@@ -58,6 +58,15 @@
                 </svg>
                 Calendar
             </button>
+            <button class="nav-tab" data-tab="heatmap">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                </svg>
+                Best Weeks
+            </button>
             <button class="nav-tab" data-tab="vacations">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2.75 2.75 0 0 1-5.46 0"></path>
@@ -214,6 +223,24 @@
                 </div>
             </div>
 
+            <div class="tab-content" id="tab-heatmap">
+                <div class="card heatmap-card">
+                    <div class="card-header">
+                        <div>
+                            <h2>Best Weeks to Take Off</h2>
+                            <p class="section-hint">Higher scores mean more consecutive days off per PTO day.</p>
+                        </div>
+                        <select id="heatmap-year" class="form-select" aria-label="Heatmap year">
+                            <option value="2026" selected>2026</option>
+                            <option value="2027">2027</option>
+                        </select>
+                    </div>
+                    <div id="heatmap-state" class="empty-state">Loading best weeks...</div>
+                    <div id="heatmap-grid" class="heatmap-grid" hidden></div>
+                    <div id="heatmap-legend" class="heatmap-legend" hidden></div>
+                </div>
+            </div>
+
             <div class="tab-content" id="tab-forecast">
                 <div class="card forecast-card">
                     <div class="card-header">
@@ -229,6 +256,30 @@
                     </div>
                     <div class="chart-container">
                         <canvas id="forecast-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card multi-year-card">
+                    <div class="card-header">
+                        <div>
+                            <h2>Multi-Year Outlook</h2>
+                            <p class="section-hint">See rollover and year-end forfeiture across the next three years.</p>
+                        </div>
+                        <div class="forecast-controls">
+                            <label for="multi-year-start">Starting year</label>
+                            <select id="multi-year-start" class="form-select">
+                                <option value="2026" selected>2026</option>
+                                <option value="2027">2027</option>
+                            </select>
+                            <select id="multi-year-count" class="form-select" aria-label="Number of forecast years">
+                                <option value="2" selected>2 years</option>
+                                <option value="3">3 years</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="multi-year-state" class="empty-state">Loading multi-year outlook...</div>
+                    <div id="multi-year-summary" class="multi-year-container" hidden></div>
+                    <div class="chart-container multi-year-chart-container" hidden id="multi-year-chart-container">
+                        <canvas id="multi-year-chart"></canvas>
                     </div>
                 </div>
 

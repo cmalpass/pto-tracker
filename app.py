@@ -7,6 +7,7 @@ import calendar
 import hmac
 import secrets
 import logging
+from itertools import combinations
 from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
@@ -437,6 +438,149 @@ def generate_yearly_forecast(year, config):
         balance['month_name'] = end_date.strftime('%B')
         forecast.append(balance)
     return forecast
+
+
+def generate_multi_year_forecast(start_year, years, config):
+    """Return bounded yearly summaries while preserving the existing balance math."""
+    results = []
+    for year in range(start_year, start_year + years):
+        monthly = generate_yearly_forecast(year, config)
+        year_start = date(year, 1, 1)
+        year_end = date(year, 12, 31)
+        year_accrued = (
+            calculate_accrual_to_date(year_end.strftime('%Y-%m-%d'), config)
+            - calculate_accrual_to_date(
+                (year_start - timedelta(days=1)).strftime('%Y-%m-%d'), config
+            )
+        )
+        used_days, used_hours = calculate_vacation_usage_in_range(
+            year_start, year_end, config
+        )
+        hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
+        used_amount = (
+            (used_days * hours_per_day) + used_hours
+            if config.get('pto_accrual_type') == 'hours'
+            else used_days + (used_hours / hours_per_day)
+        )
+        year_end_balance = monthly[-1]['balance']
+        limit = monthly[-1]['limit']
+        if not config.get('pto_uses_rollover', True):
+            carryover = 0.0
+            forfeited = year_end_balance
+        elif config.get('pto_lose_above_limit', False):
+            carryover = min(year_end_balance, limit)
+            forfeited = max(0.0, year_end_balance - limit)
+        else:
+            carryover = year_end_balance
+            forfeited = 0.0
+        results.append({
+            'year': year,
+            'monthly_balances': [
+                {'month': entry['month'], 'month_number': index + 1,
+                 'month_name': entry['month_name'], 'balance': entry['balance']}
+                for index, entry in enumerate(monthly)
+            ],
+            'year_end_balance': year_end_balance,
+            'carryover': round(carryover, 2),
+            'forfeited': round(forfeited, 2),
+            'total_accrued': round(year_accrued, 2),
+            'total_used': round(used_amount, 2),
+            'limit': limit,
+        })
+    return results
+
+
+def _calculate_week_impact(week_start, week_end, holidays_map, booked_dates,
+                           holidays_require_pto, year):
+    holidays_set = set(holidays_map)
+    candidates = [
+        day for day in _daterange(week_start, week_end)
+        if day.year == year
+        and day.weekday() < 5
+        and day not in booked_dates
+        and (holidays_require_pto or day not in holidays_set)
+    ]
+
+    best = {}
+    for days_needed in range(1, min(3, len(candidates)) + 1):
+        best_result = {'score': 0.0, 'total_days_off': 0, 'pto_dates': []}
+        for selected in combinations(candidates, days_needed):
+            pto_dates = set(selected)
+            total_days_off = _continuous_days_off_count(
+                pto_dates,
+                holidays_set,
+                min_date=date(year, 1, 1),
+                max_date=date(year, 12, 31)
+            )
+            score = total_days_off / days_needed
+            if score > best_result['score']:
+                best_result = {
+                    'score': round(score, 2),
+                    'total_days_off': total_days_off,
+                    'pto_dates': [day.strftime('%Y-%m-%d') for day in selected],
+                }
+        best[days_needed] = best_result
+
+    holidays = sorted({
+        name for holiday_date, name in holidays_map.items()
+        if week_start <= holiday_date <= week_end
+    })
+    primary = best.get(1, {'score': 0.0, 'total_days_off': 0, 'pto_dates': []})
+    return {
+        'score': primary['score'],
+        'pto_days_needed': 1 if candidates else 0,
+        'total_days_off': primary['total_days_off'],
+        'best_pto_dates': primary['pto_dates'],
+        'best_two_day_score': best.get(2, {}).get('score', 0.0),
+        'best_three_day_score': best.get(3, {}).get('score', 0.0),
+        'holidays': holidays,
+        'already_booked': any(day in booked_dates for day in _daterange(week_start, week_end)),
+    }
+
+
+def generate_heatmap(year, config):
+    """Build at most 53 weekly candidates for an offline, bounded heatmap."""
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    first_week = year_start - timedelta(days=year_start.weekday())
+    last_week = year_end + timedelta(days=6 - year_end.weekday())
+    holiday_map = {}
+    for holiday_year in (year - 1, year, year + 1):
+        holiday_map.update(get_us_holidays(holiday_year))
+    db = get_db()
+    rows = db.execute(
+        'SELECT start_date, end_date FROM vacations '
+        'WHERE start_date <= ? AND end_date >= ?',
+        (year_end.strftime('%Y-%m-%d'), year_start.strftime('%Y-%m-%d'))
+    ).fetchall()
+    booked_dates = set()
+    for row in rows:
+        start = max(datetime.strptime(row['start_date'], '%Y-%m-%d').date(), year_start)
+        end = min(datetime.strptime(row['end_date'], '%Y-%m-%d').date(), year_end)
+        booked_dates.update(_daterange(start, end))
+
+    weeks = []
+    current = first_week
+    while current <= last_week:
+        week_end = current + timedelta(days=6)
+        impact = _calculate_week_impact(
+            current, week_end, holiday_map, booked_dates,
+            config.get('pto_holidays_require_pto', True), year
+        )
+        weeks.append({
+            'week_number': current.isocalendar().week,
+            'start_date': current.strftime('%Y-%m-%d'),
+            'end_date': week_end.strftime('%Y-%m-%d'),
+            **impact,
+        })
+        current += timedelta(days=7)
+    scores = [week['score'] for week in weeks]
+    return {
+        'year': year,
+        'weeks': weeks,
+        'max_score': max(scores, default=0.0),
+        'min_score': min(scores, default=0.0),
+    }
 
 
 def generate_calendar_events(year, config):
@@ -880,6 +1024,21 @@ def api_get_balance_range():
     return jsonify({'year': year, 'forecast': forecast})
 
 
+@app.route('/api/forecast/multi-year', methods=['GET'])
+def api_get_multi_year_forecast():
+    start_year = request.args.get('start_year', datetime.now().year, type=int)
+    years = request.args.get('years', 2, type=int)
+    if start_year < 2000 or start_year > 2100:
+        return jsonify({'error': 'start_year must be between 2000 and 2100'}), 400
+    if years < 1 or years > 3:
+        return jsonify({'error': 'years must be between 1 and 3'}), 400
+    config = get_config()
+    return jsonify({
+        'start_year': start_year,
+        'years': generate_multi_year_forecast(start_year, years, config),
+    })
+
+
 @app.route('/api/forecast/<date>', methods=['GET'])
 def api_get_forecast(date):
     config = get_config()
@@ -961,6 +1120,13 @@ def api_get_vacation_suggestions():
     config = get_config()
     payload = generate_vacation_suggestions(year, config)
     return jsonify(payload)
+
+
+@app.route('/api/heatmap/<int:year>', methods=['GET'])
+def api_get_heatmap(year):
+    if year < 2000 or year > 2100:
+        return jsonify({'error': 'year must be between 2000 and 2100'}), 400
+    return jsonify(generate_heatmap(year, get_config()))
 
 
 @app.route('/api/vacations/<int:vacation_id>', methods=['PUT'])
