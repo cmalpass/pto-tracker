@@ -39,6 +39,14 @@ const API = {
     }
 };
 
+async function parseResponse(res) {
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(data?.error || data?.message || res.statusText || `Request failed (${res.status})`);
+    }
+    return data;
+}
+
 const state = {
     config: {},
     vacations: [],
@@ -47,6 +55,7 @@ const state = {
     currentYear: new Date().getFullYear(),
     currentMonth: new Date().getMonth(),
     forecastChart: null,
+    forecastRequestId: 0,
     editingVacationId: null,
     vacationCalcRequestId: 0,
     vacationSuggestions: null
@@ -56,6 +65,7 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 document.addEventListener('DOMContentLoaded', () => {
+    setupThemeToggle();
     setupTabs();
     setupSettings();
     setupVacationModal();
@@ -76,6 +86,22 @@ function setupTabs() {
             else if (tab.dataset.tab === 'forecast') loadForecast();
             else if (tab.dataset.tab === 'vacations') loadVacations();
         });
+    });
+}
+
+function setupThemeToggle() {
+    const toggle = document.getElementById('btn-theme-toggle');
+    if (!toggle) return;
+    const savedTheme = localStorage.getItem('pto-theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+    document.documentElement.dataset.theme = theme;
+    toggle.setAttribute('aria-pressed', String(theme === 'dark'));
+    toggle.addEventListener('click', () => {
+        const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = nextTheme;
+        localStorage.setItem('pto-theme', nextTheme);
+        toggle.setAttribute('aria-pressed', String(nextTheme === 'dark'));
     });
 }
 
@@ -115,6 +141,7 @@ async function loadDashboard() {
         renderMiniCalendar();
     } catch (err) {
         console.error('Failed to load dashboard:', err);
+        showToast('Failed to load dashboard', 'error');
     }
 }
 
@@ -179,11 +206,37 @@ function setupCalendar() {
     });
 }
 
+function expandCalendarEvents(events, year, month) {
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month + 1, 0);
+    const expanded = [];
+    (Array.isArray(events) ? events : []).forEach(event => {
+        if (event.date) {
+            expanded.push(event);
+            return;
+        }
+        if (!event.start_date || !event.end_date) return;
+        const start = parseIsoDateToLocal(event.start_date);
+        const end = parseIsoDateToLocal(event.end_date);
+        const overlapStart = start > monthStart ? start : monthStart;
+        const overlapEnd = end < monthEnd ? end : monthEnd;
+        for (const day = new Date(overlapStart); day <= overlapEnd; day.setDate(day.getDate() + 1)) {
+            expanded.push({ ...event, date: toIsoDate(day) });
+        }
+    });
+    return expanded;
+}
+
 async function renderCalendar() {
     const title = `${MONTHS[state.currentMonth]} ${state.currentYear}`;
     document.getElementById('calendar-title').textContent = title;
     try {
-        const events = await API.get(`/api/calendar/${state.currentYear}/${state.currentMonth + 1}`);
+        const response = await API.get(`/api/calendar/${state.currentYear}/${state.currentMonth + 1}`);
+        const monthEvents = expandCalendarEvents(
+            response.events,
+            state.currentYear,
+            state.currentMonth
+        );
         const container = document.getElementById('calendar-grid');
         let html = `<div class="cal-header">${DAYS.map(d => `<span>${d}</span>`).join('')}</div>`;
         const firstDay = new Date(state.currentYear, state.currentMonth, 1).getDay();
@@ -197,13 +250,14 @@ async function renderCalendar() {
             let classes = 'cal-day';
             const dateStr = `${state.currentYear}-${String(state.currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             if (today.getDate() === d && today.getMonth() === state.currentMonth && today.getFullYear() === state.currentYear) classes += ' today';
-            const dayEvents = events.events.filter(e => e.date === dateStr);
+            const dayEvents = monthEvents.filter(e => e.date === dateStr);
             if (dayEvents.some(e => e.type === 'holiday')) classes += ' holiday';
             if (dayEvents.some(e => e.type === 'vacation')) classes += ' vacation';
             html += `<div class="${classes}" data-date="${dateStr}"><span class="day-number">${d}</span>`;
             dayEvents.slice(0, 2).forEach(e => {
                 const label = e.type === 'holiday' ? e.name.substring(0, 8) : (e.name || 'Vacation').substring(0, 10);
-                html += `<span class="day-event ${e.type}">${label}</span>`;
+                const eventClass = e.type === 'holiday' || e.type === 'vacation' ? e.type : 'vacation';
+                html += `<span class="day-event ${eventClass}">${escapeHtml(label)}</span>`;
             });
             html += '</div>';
         }
@@ -215,6 +269,7 @@ async function renderCalendar() {
         container.innerHTML = html;
     } catch (err) {
         console.error('Failed to load calendar:', err);
+        showToast('Failed to load calendar', 'error');
     }
 }
 
@@ -230,6 +285,7 @@ async function loadVacations() {
         renderVacationSuggestions();
     } catch (err) {
         console.error('Failed to load vacations:', err);
+        showToast('Failed to load vacations', 'error');
     }
 }
 
@@ -688,24 +744,31 @@ async function loadForecast() {
             await loadForecast();
         });
     }
+    const requestId = ++state.forecastRequestId;
     try {
         const data = await API.get(`/api/balance?year=${state.currentYear}`);
+        if (requestId !== state.forecastRequestId) return;
         state.forecast = data.forecast || [];
         try {
             renderForecastChart();
         } catch (chartErr) {
             console.error('Failed to render chart:', chartErr);
+            showToast('Failed to render forecast chart', 'error');
         }
         renderForecastTable();
     } catch (err) {
         console.error('Failed to load forecast:', err);
+        showToast('Failed to load forecast', 'error');
     }
 }
 
 function renderForecastChart() {
     const ctx = document.getElementById('forecast-chart');
     if (!ctx) return;
-    if (state.forecastChart) state.forecastChart.destroy();
+    if (state.forecastChart) {
+        state.forecastChart.destroy();
+        state.forecastChart = null;
+    }
     const labels = state.forecast.map(f => f.month_name.substring(0, 3));
     const accrued = state.forecast.map(f => f.accrued);
     const used = state.forecast.map(f => f.used);

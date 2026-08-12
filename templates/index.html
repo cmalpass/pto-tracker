@@ -23,6 +23,12 @@
                     PTO Tracker
                 </h1>
                 <div class="header-actions">
+                    <button class="btn btn-icon" id="btn-theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
+                        </svg>
+                    </button>
                     <button class="btn btn-icon" id="btn-settings" title="Settings">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"></circle>
@@ -208,14 +214,30 @@
                 <div class="card forecast-card">
                     <div class="card-header">
                         <h2>PTO Balance Forecast</h2>
-                        <select id="forecast-year" class="form-select">
-                            <option value="2026" selected>2026</option>
-                            <option value="2027">2027</option>
-                        </select>
+                        <div>
+                            <select id="forecast-year" class="form-select">
+                                <option value="2026" selected>2026</option>
+                                <option value="2027">2027</option>
+                            </select>
+                            <a class="btn btn-secondary" href="/api/export/excel">Export Excel</a>
+                            <a class="btn btn-secondary" href="/api/export/csv">Export CSV</a>
+                        </div>
                     </div>
                     <div class="chart-container">
                         <canvas id="forecast-chart"></canvas>
                     </div>
+                </div>
+
+                <div class="card notes-card">
+                    <div class="card-header">
+                        <h2>Notes</h2>
+                    </div>
+                    <form id="note-form" class="form-row">
+                        <input type="date" id="note-date" required>
+                        <input type="text" id="note-text" placeholder="Add a note" required>
+                        <button class="btn btn-primary" type="submit">Add Note</button>
+                    </form>
+                    <div id="notes-list"></div>
                 </div>
                 <div class="card forecast-details-card">
                     <div class="card-header">
@@ -367,5 +389,38 @@
     </div>
 
     <script src="/static/js/app.js?v=20260418-4"></script>
+    <script>
+        (() => {
+            const form = document.getElementById('note-form');
+            const list = document.getElementById('notes-list');
+            const dateInput = document.getElementById('note-date');
+            dateInput.value = new Date().toISOString().slice(0, 10);
+            async function loadNotes() {
+                const response = await fetch('/api/notes');
+                const notes = await response.json();
+                list.innerHTML = notes.length ? notes.map(note =>
+                    `<div class="note-item"><strong>${note.date}</strong> ${note.text}
+                     <button class="btn btn-sm" data-note-id="${note.id}">Delete</button></div>`
+                ).join('') : '<p class="empty-hint">No notes yet</p>';
+                list.querySelectorAll('[data-note-id]').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        await fetch(`/api/notes/${button.dataset.noteId}`, { method: 'DELETE' });
+                        loadNotes();
+                    });
+                });
+            }
+            form.addEventListener('submit', async event => {
+                event.preventDefault();
+                await fetch('/api/notes', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({date: dateInput.value, text: document.getElementById('note-text').value})
+                });
+                document.getElementById('note-text').value = '';
+                loadNotes();
+            });
+            loadNotes();
+        })();
+    </script>
 </body>
 </html>

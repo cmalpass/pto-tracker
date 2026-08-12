@@ -11,7 +11,10 @@ from flask import Flask, jsonify, request, render_template, g
 import holidays
 
 app = Flask(__name__)
-DATABASE = os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
+DATABASE = os.environ.get(
+    'PTO_DB_PATH',
+    os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
+)
 logger = logging.getLogger(__name__)
 
 NUMERIC_CONFIG_KEYS = {
@@ -80,7 +83,9 @@ def close_db(exc):
 
 
 def init_db():
-    os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
+    database_dir = os.path.dirname(DATABASE)
+    if database_dir:
+        os.makedirs(database_dir, exist_ok=True)
     conn = sqlite3.connect(DATABASE)
     conn.executescript('''
         CREATE TABLE IF NOT EXISTS config (
@@ -227,21 +232,35 @@ def calculate_accrual_to_date(target_date, config):
     pay_period_days = 365.25 / config['pay_periods_per_year']
     days_elapsed = (target - accrual_start).days
     if config['accrual_method'] == 'pro-rata':
-        business_days_worked = 0
-        current = accrual_start
         holidays_set = set()
         for y in range(accrual_start.year, target.year + 1):
             holidays_set.update(get_us_holidays(y))
-        while current <= target:
-            if is_business_day(current) and current not in holidays_set:
-                business_days_worked += 1
-            current += timedelta(days=1)
+        business_days_worked = _count_business_days(accrual_start, target, holidays_set)
         accrual_per_day = config['pto_accrual_per_pay_period'] / (pay_period_days * 5 / 7)
         accrued = business_days_worked * accrual_per_day
     else:
         pay_periods_elapsed = days_elapsed / pay_period_days
         accrued = pay_periods_elapsed * config['pto_accrual_per_pay_period']
     return accrued
+
+
+def _count_business_days(start, end, holidays_set=None):
+    """Count weekdays in an inclusive date range, excluding supplied holidays."""
+    if start > end:
+        return 0
+    total_days = (end - start).days + 1
+    full_weeks, remainder = divmod(total_days, 7)
+    business_days = full_weeks * 5
+    business_days += sum(
+        (start.weekday() + offset) % 7 < 5
+        for offset in range(remainder)
+    )
+    if holidays_set:
+        business_days -= sum(
+            start <= holiday <= end and holiday.weekday() < 5
+            for holiday in holidays_set
+        )
+    return business_days
 
 
 def calculate_vacation_usage_in_range(range_start, range_end, config):
@@ -301,7 +320,7 @@ def calculate_balance_on_date(target_date, config):
 
     For the first accrual year: balance = accrued − used (no cap during year).
     For subsequent years:
-      1. Compute Dec-31 balance of the prior year (recursive).
+      1. Compute each prior year's Dec-31 balance iteratively.
       2. Apply rollover rules:
          - pto_uses_rollover=False  → carry = 0 (use-it-or-lose-it)
          - pto_lose_above_limit=True → carry = min(carry, carryover_limit)
@@ -319,53 +338,48 @@ def calculate_balance_on_date(target_date, config):
     lose_above_limit = config.get('pto_lose_above_limit', False)
     effective_limit = (carryover_limit_days * hours_per_day) if is_hours else carryover_limit_days
 
-    # --- Determine year window and carried-over balance ---
-    if target.year <= accrual_start.year:
-        # First (or pre-start) accrual year — no carry
-        carry_balance = 0.0
-        year_window_start = accrual_start
-    else:
-        dec31_prev = date(target.year - 1, 12, 31)
-        prev = calculate_balance_on_date(dec31_prev.strftime('%Y-%m-%d'), config)
-        carry_balance = prev['balance']
+    if target < accrual_start:
+        return {
+            'accrued': 0.0, 'used': 0.0, 'used_days': 0.0, 'used_hours': 0.0,
+            'balance': 0.0, 'limit': round(effective_limit, 2), 'carry': 0.0
+        }
 
-        # Apply year-end rollover rules
+    # Walk each accrual year once, carrying forward the prior year's ending balance.
+    carry_balance = 0.0
+    for year in range(accrual_start.year, target.year + 1):
+        year_window_start = max(accrual_start, date(year, 1, 1))
+        year_window_end = min(target, date(year, 12, 31))
+        year_accrual = (
+            calculate_accrual_to_date(year_window_end.strftime('%Y-%m-%d'), config)
+            - calculate_accrual_to_date(
+                (year_window_start - timedelta(days=1)).strftime('%Y-%m-%d'), config
+            )
+        )
+        used_days, used_hours = calculate_vacation_usage_in_range(
+            year_window_start, year_window_end, config
+        )
+        if is_hours:
+            used_amount = (used_days * hours_per_day) + used_hours
+        else:
+            used_amount = used_days + (used_hours / hours_per_day)
+
+        balance = max(0.0, carry_balance + year_accrual - used_amount)
+        if year == target.year:
+            return {
+                'accrued': round(carry_balance + year_accrual, 2),
+                'used': round(used_amount, 2),
+                'used_days': round(used_days, 2),
+                'used_hours': round(used_hours, 2),
+                'balance': round(balance, 2),
+                'limit': round(effective_limit, 2),
+                'carry': round(carry_balance, 2)
+            }
+
+        carry_balance = balance
         if not uses_rollover:
-            carry_balance = 0.0          # use-it-or-lose-it
+            carry_balance = 0.0
         elif lose_above_limit and carry_balance > effective_limit:
-            carry_balance = effective_limit  # cap at rollover limit
-
-        year_window_start = date(target.year, 1, 1)
-
-    # --- Year-specific accrual ---
-    accrued_to_target = calculate_accrual_to_date(target_date, config)
-    if year_window_start > accrual_start:
-        dec31_prev_str = (year_window_start - timedelta(days=1)).strftime('%Y-%m-%d')
-        accrued_to_window_start = calculate_accrual_to_date(dec31_prev_str, config)
-        year_accrual = accrued_to_target - accrued_to_window_start
-    else:
-        year_accrual = accrued_to_target
-
-    # --- Year-specific usage ---
-    used_days, used_hours = calculate_vacation_usage_in_range(year_window_start, target, config)
-    if is_hours:
-        used_amount = (used_days * hours_per_day) + used_hours
-    else:
-        used_amount = used_days + (used_hours / hours_per_day)
-
-    balance = carry_balance + year_accrual - used_amount
-    if balance < 0:
-        balance = 0.0
-
-    return {
-        'accrued': round(carry_balance + year_accrual, 2),
-        'used': round(used_amount, 2),
-        'used_days': round(used_days, 2),
-        'used_hours': round(used_hours, 2),
-        'balance': round(balance, 2),
-        'limit': round(effective_limit, 2),
-        'carry': round(carry_balance, 2)
-    }
+            carry_balance = effective_limit
 
 
 def generate_yearly_forecast(year, config):
@@ -385,33 +399,92 @@ def generate_yearly_forecast(year, config):
 def generate_calendar_events(year, config):
     events = []
     us_holidays = get_us_holidays(year)
-    for date, name in sorted(us_holidays.items()):
+    for holiday_date, name in sorted(us_holidays.items()):
         events.append({
-            'date': date.strftime('%Y-%m-%d'),
+            'date': holiday_date.strftime('%Y-%m-%d'),
             'type': 'holiday',
             'name': name,
             'color': '#e74c3c'
         })
     db = get_db()
     rows = db.execute(
-        'SELECT * FROM vacations WHERE start_date LIKE ? OR end_date LIKE ?',
-        (f'{year}%', f'{year}%')
+        'SELECT * FROM vacations WHERE start_date <= ? AND end_date >= ?',
+        (f'{year}-12-31', f'{year}-01-01')
     ).fetchall()
     for row in rows:
         start = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
         end = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
-        for i in range((end - start).days + 1):
-            day = start + timedelta(days=i)
-            if day.year == year:
-                events.append({
-                    'date': day.strftime('%Y-%m-%d'),
-                    'type': 'vacation',
-                    'name': row['name'],
-                    'color': '#3498db',
-                    'vacation_id': row['id']
-                })
+        start = max(start, date(year, 1, 1))
+        end = min(end, date(year, 12, 31))
+        for day in _daterange(start, end):
+            events.append({
+                'date': day.strftime('%Y-%m-%d'),
+                'type': 'vacation',
+                'name': row['name'],
+                'color': '#3498db',
+                'vacation_id': row['id']
+            })
     events.sort(key=lambda x: x['date'])
     return events
+
+
+def validate_vacation_name(value):
+    name = ''.join(
+        character for character in str(value or 'Vacation').strip()
+        if character.isprintable()
+    )[:100]
+    return name or 'Vacation'
+
+
+def _booking_amount(days, hours, config):
+    hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
+    if config.get('pto_accrual_type') == 'hours':
+        return (days * hours_per_day) + hours
+    return days + (hours / hours_per_day)
+
+
+def _existing_booking_amount_through(existing, target, config):
+    existing_start = datetime.strptime(existing['start_date'], '%Y-%m-%d').date()
+    existing_end = datetime.strptime(existing['end_date'], '%Y-%m-%d').date()
+    accrual_start = datetime.strptime(config['accrual_start_date'], '%Y-%m-%d').date()
+    year_start = accrual_start if target.year <= accrual_start.year else date(target.year, 1, 1)
+    overlap_start = max(existing_start, year_start)
+    overlap_end = min(existing_end, target)
+    if overlap_start > overlap_end:
+        return 0.0
+
+    total_business_days = get_vacation_days(
+        existing['start_date'], existing['end_date'], config
+    )
+    overlap_business_days = get_vacation_days(
+        overlap_start.strftime('%Y-%m-%d'),
+        overlap_end.strftime('%Y-%m-%d'),
+        config
+    )
+    if total_business_days > 0:
+        days = existing['days'] * (overlap_business_days / total_business_days)
+    elif existing_start >= year_start:
+        days = existing['days']
+    else:
+        days = 0.0
+    hours = existing['hours'] if existing_start >= year_start else 0.0
+    return _booking_amount(days, hours, config)
+
+
+def _validate_booking_balance(end_date, days, hours, config, existing=None):
+    projected = calculate_balance_on_date(end_date, config)
+    available = projected['accrued'] - projected['used']
+    if existing:
+        target = datetime.strptime(end_date, '%Y-%m-%d').date()
+        available += _existing_booking_amount_through(existing, target, config)
+    requested = _booking_amount(days, hours, config)
+    if available - requested < -1e-9:
+        unit = 'hours' if config.get('pto_accrual_type') == 'hours' else 'days'
+        return (
+            f'Vacation would create a negative balance: '
+            f'{available - requested:.2f} {unit} projected after booking'
+        )
+    return None
 
 
 def _daterange(start, end):
@@ -447,7 +520,7 @@ def _valid_pto_day(day, holidays_set, reserved_dates, earliest_date, year, holid
     )
 
 
-def _continuous_days_off_count(pto_dates, holidays_set):
+def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=None):
     if not pto_dates:
         return 0
 
@@ -456,14 +529,16 @@ def _continuous_days_off_count(pto_dates, holidays_set):
 
     start = min(pto_dates)
     end = max(pto_dates)
+    min_date = min_date or date(start.year, 1, 1)
+    max_date = max_date or date(end.year, 12, 31)
 
     cursor = start - timedelta(days=1)
-    while is_day_off(cursor):
+    while cursor >= min_date and is_day_off(cursor):
         start = cursor
         cursor -= timedelta(days=1)
 
     cursor = end + timedelta(days=1)
-    while is_day_off(cursor):
+    while cursor <= max_date and is_day_off(cursor):
         end = cursor
         cursor += timedelta(days=1)
 
@@ -478,7 +553,12 @@ def _make_suggestion(start_day, end_day, title, reason, category, holidays_set, 
         if day.weekday() < 5 and (holidays_require_pto or day not in holidays_set)
     ]
     pto_days = len(pto_dates)
-    days_off = _continuous_days_off_count(set(all_dates), holidays_set)
+    days_off = _continuous_days_off_count(
+        set(all_dates),
+        holidays_set,
+        min_date=date(start_day.year, 1, 1),
+        max_date=date(start_day.year, 12, 31)
+    )
     return {
         'name': title,
         'start_date': start_day.strftime('%Y-%m-%d'),
@@ -508,7 +588,11 @@ def generate_vacation_suggestions(year, config):
     holidays_require_pto = config.get('pto_holidays_require_pto', True)
 
     dec31_balance = calculate_balance_on_date(year_end.strftime('%Y-%m-%d'), config)
-    remaining_amount = dec31_balance['balance']
+    # The balance helper includes all bookings through year-end, so suggestions
+    # only budget the amount that remains after existing vacations.
+    remaining_amount = max(
+        0.0, dec31_balance['accrued'] - dec31_balance['used']
+    )
     remaining_days = (remaining_amount / hours_per_day) if is_hours else remaining_amount
 
     carry_limit_days = config.get('pto_carryover_limit', 0) or 0
@@ -758,9 +842,9 @@ def api_get_vacations():
 
 @app.route('/api/vacations', methods=['POST'])
 def api_add_vacation():
-    data = request.get_json()
+    data = request.get_json() or {}
     db = get_db()
-    name = data.get('name', 'Vacation')
+    name = validate_vacation_name(data.get('name', 'Vacation'))
     start_date = data.get('start_date')
     end_date = data.get('end_date')
     if not start_date or not end_date:
@@ -768,6 +852,11 @@ def api_add_vacation():
     if start_date > end_date:
         return jsonify({'error': 'start_date cannot be after end_date'}), 400
     config = get_config()
+    try:
+        datetime.strptime(start_date, '%Y-%m-%d')
+        datetime.strptime(end_date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Dates must use yyyy-mm-dd format'}), 400
     auto_days = parse_bool(data.get('auto_days', True), default=True)
     if auto_days:
         days = get_vacation_days(start_date, end_date, config)
@@ -781,6 +870,11 @@ def api_add_vacation():
     hours = normalize_quarter_hours(data.get('hours', 0))
     if hours is None:
         return jsonify({'error': 'hours must be non-negative and in numeric format'}), 400
+    balance_error = _validate_booking_balance(
+        end_date, days, hours, config
+    )
+    if balance_error:
+        return jsonify({'error': balance_error}), 400
     cursor = db.execute(
         'INSERT INTO vacations (name, start_date, end_date, days, hours) VALUES (?, ?, ?, ?, ?)',
         (name, start_date, end_date, days, hours)
@@ -817,13 +911,13 @@ def api_get_vacation_suggestions():
 
 @app.route('/api/vacations/<int:vacation_id>', methods=['PUT'])
 def api_update_vacation(vacation_id):
-    data = request.get_json()
+    data = request.get_json() or {}
     db = get_db()
     existing = db.execute('SELECT * FROM vacations WHERE id = ?', (vacation_id,)).fetchone()
     if not existing:
         return jsonify({'error': 'Vacation not found'}), 404
 
-    name = data.get('name', existing['name'])
+    name = validate_vacation_name(data.get('name', existing['name']))
     start_date = data.get('start_date', existing['start_date'])
     end_date = data.get('end_date', existing['end_date'])
 
@@ -831,6 +925,11 @@ def api_update_vacation(vacation_id):
         return jsonify({'error': 'start_date and end_date are required'}), 400
     if start_date > end_date:
         return jsonify({'error': 'start_date cannot be after end_date'}), 400
+    try:
+        datetime.strptime(start_date, '%Y-%m-%d')
+        datetime.strptime(end_date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Dates must use yyyy-mm-dd format'}), 400
 
     config = get_config()
     auto_days = parse_bool(data.get('auto_days', True), default=True)
@@ -846,6 +945,11 @@ def api_update_vacation(vacation_id):
     hours = normalize_quarter_hours(data.get('hours', existing['hours']))
     if hours is None:
         return jsonify({'error': 'hours must be non-negative and in numeric format'}), 400
+    balance_error = _validate_booking_balance(
+        end_date, days, hours, config, existing=existing
+    )
+    if balance_error:
+        return jsonify({'error': balance_error}), 400
 
     db.execute(
         'UPDATE vacations SET name = ?, start_date = ?, end_date = ?, days = ?, hours = ? WHERE id = ?',
@@ -901,15 +1005,17 @@ def api_get_month_calendar(year, month):
         if start <= month_end and end >= month_start:
             overlap_start = max(start, month_start)
             overlap_end = min(end, month_end)
-            for i in range((overlap_end - overlap_start).days + 1):
-                day = overlap_start + timedelta(days=i)
-                events.append({
-                    'date': day.strftime('%Y-%m-%d'),
-                    'type': 'vacation',
-                    'name': row['name'],
-                    'color': '#3498db',
-                    'vacation_id': row['id']
-                })
+            overlap_start_text = overlap_start.strftime('%Y-%m-%d')
+            events.append({
+                # Keep date for clients that only inspect the legacy event shape.
+                'date': overlap_start_text,
+                'start_date': overlap_start_text,
+                'end_date': overlap_end.strftime('%Y-%m-%d'),
+                'type': 'vacation',
+                'name': row['name'],
+                'color': '#3498db',
+                'vacation_id': row['id']
+            })
     events.sort(key=lambda x: x['date'])
     return jsonify({'year': year, 'month': month, 'events': events})
 
@@ -917,19 +1023,32 @@ def api_get_month_calendar(year, month):
 @app.route('/api/stats', methods=['GET'])
 def api_get_stats():
     config = get_config()
-    today = datetime.now().date().strftime('%Y-%m-%d')
+    today_date = datetime.now().date()
+    today = today_date.strftime('%Y-%m-%d')
     balance = calculate_balance_on_date(today, config)
     forecast = generate_yearly_forecast(datetime.now().year, config)
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
-    year_end = datetime(datetime.now().year, 12, 31).date()
+    year_end = date(today_date.year, 12, 31)
     remaining_vacations = 0
     remaining_hours = 0
     hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
     for v in vacations:
+        start = datetime.strptime(v['start_date'], '%Y-%m-%d').date()
         end = datetime.strptime(v['end_date'], '%Y-%m-%d').date()
-        if end <= year_end and end >= datetime.now().date():
+        if start > year_end or end < today_date:
+            continue
+        if start >= today_date:
             remaining_vacations += v['days']
+            remaining_hours += v['hours']
+            continue
+
+        overlap_end = min(end, year_end)
+        total_days = get_vacation_days(v['start_date'], v['end_date'], config)
+        remaining_days = get_vacation_days(today, overlap_end.strftime('%Y-%m-%d'), config)
+        if total_days > 0:
+            remaining_vacations += v['days'] * (remaining_days / total_days)
+        if start >= today_date:
             remaining_hours += v['hours']
     if config.get('pto_accrual_type') == 'hours':
         remaining_total = (remaining_vacations * hours_per_day) + remaining_hours
@@ -939,7 +1058,10 @@ def api_get_stats():
         'today': today,
         'current_balance': balance,
         'yearly_forecast': forecast,
-        'upcoming_vacations': len([v for v in vacations if datetime.strptime(v['end_date'], '%Y-%m-%d').date() >= datetime.now().date()]),
+        'upcoming_vacations': len([
+            v for v in vacations
+            if datetime.strptime(v['end_date'], '%Y-%m-%d').date() >= today_date
+        ]),
         'remaining_vacation_days': round(remaining_total, 2),
         'total_vacations': len(vacations)
     })
@@ -947,6 +1069,161 @@ def api_get_stats():
 
 with app.app_context():
     init_db()
+
+from csv import writer as csv_writer
+from io import BytesIO, StringIO
+from flask import send_file
+from openpyxl import Workbook
+
+
+def _validate_note_payload(data):
+    data = data or {}
+    note_date = data.get('date')
+    text = str(data.get('text', '')).strip()
+    if not isinstance(note_date, str) or not note_date or not text:
+        return None, 'date and text are required'
+    try:
+        parsed_date = datetime.strptime(note_date, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        return None, 'date must use yyyy-mm-dd format'
+    if parsed_date.strftime('%Y-%m-%d') != note_date:
+        return None, 'date must use yyyy-mm-dd format'
+    return {'date': note_date, 'text': text}, None
+
+
+@app.route('/api/notes', methods=['GET'])
+def api_get_notes():
+    db = get_db()
+    note_date = request.args.get('date')
+    if note_date:
+        rows = db.execute(
+            'SELECT * FROM notes WHERE date = ? ORDER BY date DESC, id DESC',
+            (note_date,)
+        ).fetchall()
+    else:
+        rows = db.execute('SELECT * FROM notes ORDER BY date DESC, id DESC').fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route('/api/notes', methods=['POST'])
+def api_add_note():
+    payload, error = _validate_note_payload(request.get_json())
+    if error:
+        return jsonify({'error': error}), 400
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO notes (date, text) VALUES (?, ?)',
+        (payload['date'], payload['text'])
+    )
+    db.commit()
+    row = db.execute('SELECT * FROM notes WHERE id = ?', (cursor.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.route('/api/notes/<int:note_id>', methods=['PUT'])
+def api_update_note(note_id):
+    db = get_db()
+    existing = db.execute('SELECT * FROM notes WHERE id = ?', (note_id,)).fetchone()
+    if not existing:
+        return jsonify({'error': 'Note not found'}), 404
+    data = request.get_json() or {}
+    payload, error = _validate_note_payload({
+        'date': data.get('date', existing['date']),
+        'text': data.get('text', existing['text'])
+    })
+    if error:
+        return jsonify({'error': error}), 400
+    db.execute(
+        'UPDATE notes SET date = ?, text = ? WHERE id = ?',
+        (payload['date'], payload['text'], note_id)
+    )
+    db.commit()
+    row = db.execute('SELECT * FROM notes WHERE id = ?', (note_id,)).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route('/api/notes/<int:note_id>', methods=['DELETE'])
+def api_delete_note(note_id):
+    db = get_db()
+    db.execute('DELETE FROM notes WHERE id = ?', (note_id,))
+    db.commit()
+    return jsonify({'status': 'deleted'})
+
+
+def _export_rows():
+    db = get_db()
+    config = get_config()
+    year = datetime.now().year
+    today = datetime.now().date().strftime('%Y-%m-%d')
+    return config, calculate_balance_on_date(today, config), db.execute(
+        'SELECT name, start_date, end_date, days, hours FROM vacations ORDER BY start_date'
+    ).fetchall(), generate_yearly_forecast(year, config), year
+
+
+def _safe_export_value(value):
+    if isinstance(value, str) and value.startswith(('=', '+', '-', '@')):
+        return "'" + value
+    return value
+
+
+@app.route('/api/export/excel', methods=['GET'])
+def api_export_excel():
+    config, balance, vacations, forecast, year = _export_rows()
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = 'Balance Summary'
+    summary.append([_safe_export_value(value) for value in ['Metric', 'Value']])
+    summary.append([_safe_export_value(value) for value in ['Current Balance', balance['balance']]])
+    summary.append([_safe_export_value(value) for value in ['Accrued YTD', balance['accrued']]])
+    summary.append([_safe_export_value(value) for value in ['Used YTD', balance['used']]])
+    summary.append([_safe_export_value(value) for value in ['Carryover from prior year', balance['carry']]])
+
+    schedule = workbook.create_sheet('Vacation Schedule')
+    schedule.append([_safe_export_value(value) for value in ['Name', 'Start', 'End', 'Days', 'Hours']])
+    for vacation in vacations:
+        schedule.append([_safe_export_value(value) for value in vacation])
+
+    forecast_sheet = workbook.create_sheet('Monthly Forecast')
+    forecast_sheet.append([_safe_export_value(value) for value in ['Month', 'Accrued', 'Used', 'Balance']])
+    for month in forecast:
+        forecast_sheet.append([_safe_export_value(value) for value in [
+            month['month_name'], month['accrued'], month['used'], month['balance']
+        ]])
+
+    config_sheet = workbook.create_sheet('Configuration')
+    config_sheet.append([_safe_export_value(value) for value in ['Setting', 'Value']])
+    for key, value in sorted(config.items()):
+        config_sheet.append([_safe_export_value(value) for value in [key, value]])
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=f'pto-export-{year}.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@app.route('/api/export/csv', methods=['GET'])
+def api_export_csv():
+    _, _, vacations, _, year = _export_rows()
+    output = StringIO()
+    csv = csv_writer(output)
+    csv.writerow([_safe_export_value(value) for value in ['Name', 'Start', 'End', 'Days', 'Hours']])
+    csv.writerows([
+        [_safe_export_value(value) for value in vacation]
+        for vacation in vacations
+    ])
+    response = send_file(
+        BytesIO(output.getvalue().encode('utf-8')),
+        as_attachment=True,
+        download_name=f'pto-vacations-{year}.csv',
+        mimetype='text/csv'
+    )
+    return response
+
 
 if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
