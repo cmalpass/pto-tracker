@@ -85,6 +85,131 @@ body {
     align-items: center;
 }
 
+.notification-popover {
+    position: relative;
+}
+
+.notification-count {
+    position: absolute;
+    top: 0.15rem;
+    right: 0.1rem;
+    min-width: 1.15rem;
+    padding: 0.05rem 0.25rem;
+    border: 2px solid var(--card);
+    border-radius: var(--radius-full);
+    background: var(--danger);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.1;
+    text-align: center;
+}
+
+.notification-panel {
+    position: absolute;
+    top: calc(100% + 0.75rem);
+    right: 0;
+    z-index: 120;
+    width: min(23rem, calc(100vw - 2rem));
+    max-height: min(34rem, calc(100vh - 6rem));
+    overflow-y: auto;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    box-shadow: var(--shadow-lg);
+}
+
+.notification-panel-header {
+    margin-bottom: 0.75rem;
+}
+
+.notification-panel-header h2 {
+    font-size: 1rem;
+}
+
+.notification-item {
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--border);
+}
+
+.notification-item:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.notification-item.critical {
+    border-left: 3px solid var(--danger);
+    padding-left: 0.75rem;
+}
+
+.notification-item.warning {
+    border-left: 3px solid var(--warning);
+    padding-left: 0.75rem;
+}
+
+.notification-title {
+    font-size: 0.95rem;
+    color: var(--text);
+}
+
+.notification-message {
+    margin-top: 0.2rem;
+    font-size: 0.88rem;
+}
+
+.notification-detail {
+    margin-top: 0.2rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.notification-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.65rem;
+}
+
+.notification-dismiss {
+    min-height: 44px;
+    padding: 0.35rem 0.5rem;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    text-decoration: underline;
+}
+
+.notification-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.dashboard-notification-alert {
+    margin-bottom: 1.5rem;
+}
+
+.dashboard-notification-alert .notification-item {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--primary);
+    border-radius: var(--radius);
+    background: var(--card);
+    box-shadow: var(--shadow);
+}
+
+.dashboard-notification-alert .notification-item.critical {
+    border-left-color: var(--danger);
+}
+
+.dashboard-notification-alert .notification-item.warning {
+    border-left-color: var(--warning);
+}
+
 /* Navigation Tabs */
 .nav-tabs {
     display: flex;
@@ -1793,6 +1918,12 @@ textarea {
 
     .header-actions {
         gap: 0.25rem;
+    }
+
+    .notification-panel {
+        position: fixed;
+        top: 4.25rem;
+        right: 0.75rem;
     }
 
     .nav-tabs {

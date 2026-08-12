@@ -37,6 +37,163 @@ async def test_dashboard_and_forecast(browser):
         await context.close()
 
 
+async def test_smart_notifications_generate_and_link_to_actions(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        upcoming = await page.evaluate(
+            """() => {
+                const today = PTO.getLocalToday(PTOStore.getConfig());
+                const [year, month, day] = today.split('-').map(Number);
+                return new Date(Date.UTC(year, month - 1, day + 3))
+                    .toISOString().slice(0, 10);
+            }"""
+        )
+        await page.click("button:has-text('Vacations')")
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "Reminder Trip")
+        await page.fill("input[name='start_date']", upcoming)
+        await page.fill("input[name='end_date']", upcoming)
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector(".vacation-name:has-text('Reminder Trip')")
+        await page.wait_for_selector("#notification-count:not([hidden])")
+        assert await page.locator("#notification-count").inner_text()
+        await page.click("#btn-notifications")
+        assert await page.locator("#notification-list").get_by_text("Reminder Trip").is_visible()
+        await page.locator(".notification-action").filter(has_text="Review vacations").first.click()
+        assert await page.locator("#tab-vacations-tab").get_attribute("aria-selected") == "true"
+        assert upcoming
+    finally:
+        await context.close()
+
+
+async def test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        upcoming = await page.evaluate(
+            """() => {
+                const today = PTO.getLocalToday(PTOStore.getConfig());
+                const [year, month, day] = today.split('-').map(Number);
+                return new Date(Date.UTC(year, month - 1, day + 2))
+                    .toISOString().slice(0, 10);
+            }"""
+        )
+        await page.click("button:has-text('Vacations')")
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "Dismiss Me")
+        await page.select_option("#vacation-type", "personal")
+        await page.fill("input[name='start_date']", upcoming)
+        await page.fill("input[name='end_date']", upcoming)
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector("#notification-list", state="attached")
+        await page.click("#btn-notifications")
+        item = page.locator(".notification-item").filter(has_text="Dismiss Me")
+        await item.locator(".notification-dismiss").click()
+        assert not await page.locator("#notification-list .notification-item").filter(
+            has_text="Dismiss Me"
+        ).is_visible()
+        dismissed = await page.evaluate(
+            "() => localStorage.getItem('pto-tracker:notifications:dismissed:v1')"
+        )
+        assert "pto-upcoming-vacation-" in dismissed
+        await page.click("#tab-dashboard-tab")
+        await page.click("#tab-vacations-tab")
+        await page.wait_for_selector("#notification-list", state="attached")
+        assert not await page.locator("#notification-list .notification-item").filter(
+            has_text="Dismiss Me"
+        ).is_visible()
+        await page.locator(".vacation-edit").click()
+        await page.uncheck("#vacation-auto-days")
+        await page.fill("input[name='hours']", "2")
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector("#notification-list", state="attached")
+        await page.click("#btn-notifications")
+        assert await page.locator("#notification-list .notification-item").filter(
+            has_text="Dismiss Me"
+        ).is_visible()
+    finally:
+        await context.close()
+
+
+async def test_smart_notifications_cover_forfeiture_and_low_balance(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        base = await page.evaluate("() => PTOStore.getConfig()")
+        await page.evaluate(
+            """async (base) => {
+                await PTOStore.putConfig({
+                    ...base,
+                    pto_accrual_per_pay_period: 2,
+                    pto_carryover_limit: 1,
+                    pto_lose_above_limit: true,
+                    pto_uses_rollover: true
+                });
+            }""",
+            base,
+        )
+        await page.click("button:has-text('Vacations')")
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "Forfeiture refresh")
+        await page.uncheck("#vacation-auto-days")
+        await page.fill("input[name='hours']", "2")
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector("#notification-count:not([hidden])")
+        await page.click("#btn-notifications")
+        assert await page.locator("#notification-list").get_by_text(
+            "Projected PTO forfeiture"
+        ).is_visible()
+        await page.evaluate(
+            """async () => {
+                const config = await PTOStore.getConfig();
+                await PTOStore.putConfig({
+                    ...config,
+                    pto_accrual_per_pay_period: 0.25,
+                    pto_carryover_limit: 40,
+                    pto_lose_above_limit: true,
+                    pto_uses_rollover: true
+                });
+            }"""
+        )
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "Low balance refresh")
+        refresh_date = await page.evaluate(
+            """() => {
+                const today = PTO.getLocalToday({ timezone: 'UTC' });
+                const [year, month, day] = today.split('-').map(Number);
+                return new Date(Date.UTC(year, month - 1, day + 1))
+                    .toISOString().slice(0, 10);
+            }"""
+        )
+        await page.fill("input[name='start_date']", refresh_date)
+        await page.fill("input[name='end_date']", refresh_date)
+        await page.uncheck("#vacation-auto-days")
+        await page.fill("input[name='hours']", "2")
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        if await page.locator("#notification-panel").get_attribute("hidden") is not None:
+            await page.click("#btn-notifications")
+        assert await page.locator("#notification-list").get_by_text(
+            "PTO balance is running low"
+        ).is_visible()
+    finally:
+        await context.close()
+
+
+async def test_smart_notifications_empty_state(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("#btn-notifications")
+        assert await page.locator("#notification-list").get_by_text(
+            "You are all caught up."
+        ).is_visible()
+        assert await page.locator("#notification-count").is_hidden()
+        assert await page.locator("#dashboard-notification-alert").is_hidden()
+    finally:
+        await context.close()
+
+
 async def test_vacation_persists_and_deletes(browser):
     context, page = await new_page(browser)
     try:
@@ -344,6 +501,10 @@ async def main():
         browser = await playwright.chromium.launch()
         tests = [
             test_dashboard_and_forecast,
+            test_smart_notifications_generate_and_link_to_actions,
+            test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
+            test_smart_notifications_cover_forfeiture_and_low_balance,
+            test_smart_notifications_empty_state,
             test_vacation_persists_and_deletes,
             test_leave_types_and_partial_day_validation,
             test_legacy_browser_backup_migrates_leave_type,

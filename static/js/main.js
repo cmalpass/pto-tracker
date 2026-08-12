@@ -24,11 +24,18 @@ import {
     renderTypeBreakdown as renderTypeBreakdownDom,
     renderVacationSuggestions as renderVacationSuggestionsDom,
     renderVacationWarnings as renderVacationWarningsDom,
+    renderNotifications as renderNotificationsDom,
+    renderDashboardNotification as renderDashboardNotificationDom,
     renderStoredNotes as renderStoredNotesDom,
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom
 } from './modules/rendering.js?v=20260812-5';
+import {
+    dismissNotification,
+    generateNotifications,
+    visibleNotifications
+} from './modules/notifications.js?v=20260812-5';
 import {
     calendarData,
     expandCalendarEvents
@@ -85,6 +92,7 @@ export function startApplication() {
     try {
         setupThemeToggle();
         setupTabs();
+        setupNotifications();
         setupSettings();
         setupVacationModal();
         setupVacationList();
@@ -165,6 +173,7 @@ async function loadDashboard() {
         state.today = config.current_date;
         state.currentYear = config.current_year;
         state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
+        refreshNotifications();
         await loadForecast();
         const now = parseIsoDateToLocal(state.today);
         const balance = PTO.calculateBalanceOnDate(config.current_date, config, vacations);
@@ -214,6 +223,79 @@ async function loadDashboard() {
         console.error('Failed to load dashboard:', err);
         showToast('Failed to load dashboard', 'error');
     }
+}
+
+function refreshNotifications() {
+        state.notificationAlerts = generateNotifications({
+            pto: PTO,
+            config: state.config,
+            vacations: state.vacations,
+            today: state.today
+        });
+        state.notifications = visibleNotifications(state.notificationAlerts);
+        renderNotificationsDom(state.notifications);
+        renderDashboardNotificationDom(state.notifications[0] || null);
+    }
+
+function activateNotificationAction(action) {
+        const tab = document.querySelector(`.nav-tab[data-tab="${action.dataset.notificationTab}"]`);
+        if (tab) tab.click();
+        const targetId = action.dataset.notificationTarget;
+        if (targetId) {
+            window.setTimeout(() => {
+                const target = document.getElementById(targetId);
+                if (!target) return;
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                if (target.matches('[tabindex]')) target.focus({ preventScroll: true });
+            }, 0);
+        }
+    }
+
+function handleNotificationEvent(event) {
+        const dismiss = event.target.closest('[data-notification-dismiss]');
+        if (dismiss) {
+            const alert = state.notificationAlerts.find(item =>
+                item.fingerprint === dismiss.dataset.notificationDismiss);
+            if (alert) {
+                dismissNotification(alert);
+                refreshNotifications();
+                announce(`${alert.title} dismissed.`);
+            }
+            return;
+        }
+        const action = event.target.closest('.notification-action');
+        if (action) {
+            activateNotificationAction(action);
+            closeNotificationPanel();
+        }
+    }
+
+function closeNotificationPanel() {
+        const panel = document.getElementById('notification-panel');
+        const button = document.getElementById('btn-notifications');
+        if (!panel || !button) return;
+        panel.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+    }
+
+function setupNotifications() {
+        const button = document.getElementById('btn-notifications');
+        const panel = document.getElementById('notification-panel');
+        if (!button || !panel) return;
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            panel.hidden = !panel.hidden;
+            button.setAttribute('aria-expanded', String(!panel.hidden));
+        });
+        panel.addEventListener('click', handleNotificationEvent);
+        document.getElementById('dashboard-notification-alert')?.addEventListener(
+            'click', handleNotificationEvent);
+        document.addEventListener('click', event => {
+            if (!event.target.closest('.notification-popover')) closeNotificationPanel();
+        });
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeNotificationPanel();
+        });
 }
 
 function currentDaysUsed() {
