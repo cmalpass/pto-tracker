@@ -1084,30 +1084,34 @@ def api_get_stats():
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
     year_end = date(today_date.year, 12, 31)
-    remaining_vacations = 0
-    remaining_hours = 0
+    remaining_scheduled_days = 0
+    remaining_scheduled_hours = 0
     hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
     for v in vacations:
         start = datetime.strptime(v['start_date'], '%Y-%m-%d').date()
         end = datetime.strptime(v['end_date'], '%Y-%m-%d').date()
         if start > year_end or end < today_date:
             continue
-        if start >= today_date:
-            remaining_vacations += v['days']
-            remaining_hours += v['hours']
-            continue
-
+        scheduled_start = max(start, today_date)
         overlap_end = min(end, year_end)
         total_days = get_vacation_days(v['start_date'], v['end_date'], config)
-        remaining_days = get_vacation_days(today, overlap_end.strftime('%Y-%m-%d'), config)
-        if total_days > 0:
-            remaining_vacations += v['days'] * (remaining_days / total_days)
+        remaining_days = get_vacation_days(
+            scheduled_start.strftime('%Y-%m-%d'),
+            overlap_end.strftime('%Y-%m-%d'),
+            config
+        )
+        if total_days > 0 and remaining_days > 0:
+            remaining_scheduled_days += v['days'] * (remaining_days / total_days)
+        elif total_days == 0 and start >= today_date:
+            # Preserve manually entered PTO for date ranges without weekdays.
+            remaining_scheduled_days += v['days']
         if start >= today_date:
-            remaining_hours += v['hours']
+            remaining_scheduled_hours += v['hours']
     if config.get('pto_accrual_type') == 'hours':
-        remaining_total = (remaining_vacations * hours_per_day) + remaining_hours
+        remaining_total = (remaining_scheduled_days * hours_per_day) + remaining_scheduled_hours
     else:
-        remaining_total = remaining_vacations + (remaining_hours / hours_per_day)
+        remaining_total = remaining_scheduled_days + (remaining_scheduled_hours / hours_per_day)
+    remaining_scheduled_pto_days = round(remaining_total, 2)
     return jsonify({
         'today': today,
         'current_balance': balance,
@@ -1116,7 +1120,9 @@ def api_get_stats():
             v for v in vacations
             if datetime.strptime(v['end_date'], '%Y-%m-%d').date() >= today_date
         ]),
-        'remaining_vacation_days': round(remaining_total, 2),
+        # Keep the legacy field while exposing an explicitly named dashboard metric.
+        'remaining_vacation_days': remaining_scheduled_pto_days,
+        'remaining_scheduled_pto_days': remaining_scheduled_pto_days,
         'total_vacations': len(vacations)
     })
 

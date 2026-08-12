@@ -3,7 +3,7 @@ import asyncio
 import sys
 import os
 from io import BytesIO
-from datetime import date
+from datetime import date, timedelta
 from openpyxl import load_workbook
 from playwright.async_api import async_playwright, Page
 
@@ -40,6 +40,8 @@ async def test_dashboard_loads():
         assert await page.locator("text=Accrued YTD").is_visible()
         assert await page.locator("text=Used YTD").is_visible()
         assert await page.locator("text=Upcoming Trips").is_visible()
+        assert await page.locator("text=Scheduled PTO Remaining").is_visible()
+        assert await page.locator("#stat-scheduled-pto").is_visible()
         assert await page.locator("text=Days Left in Year").is_visible()
         print("✅ test_dashboard_loads passed")
         await browser.close()
@@ -232,6 +234,28 @@ async def test_export_and_note_validation(request_context):
     assert workbook['Vacation Schedule']['A2'].value.startswith("'=")
 
 
+async def test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days(request_context):
+    """Verify stats keep the entry count while exposing scheduled PTO days."""
+    start_date = date.today() + timedelta(days=7)
+    while start_date.weekday() != 0:
+        start_date += timedelta(days=1)
+    end_date = start_date + timedelta(days=4)
+    vacation = await request_context.post('/api/vacations', data={
+        'name': 'Stats Regression',
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+        'auto_days': True
+    })
+    assert vacation.status == 201
+
+    stats_response = await request_context.get('/api/stats')
+    assert stats_response.status == 200
+    stats = await stats_response.json()
+    assert stats['upcoming_vacations'] == 1
+    assert stats['remaining_scheduled_pto_days'] == stats['remaining_vacation_days']
+    assert stats['remaining_scheduled_pto_days'] == 5
+
+
 async def main():
     """Run all tests."""
     tests = [
@@ -292,6 +316,7 @@ async def run_isolated_tests():
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
     ]
     passed = 0
     failed = 0
@@ -301,7 +326,10 @@ async def run_isolated_tests():
             for test in tests:
                 await reset_database(request_context)
                 try:
-                    if test is test_export_and_note_validation:
+                    if test in {
+                        test_export_and_note_validation,
+                        test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
+                    }:
                         await test(request_context)
                     else:
                         await test()
