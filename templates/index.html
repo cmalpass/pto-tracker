@@ -200,6 +200,31 @@
                         <h2>Suggested Vacations</h2>
                         <button class="btn btn-secondary" id="btn-refresh-suggestions">Refresh Suggestions</button>
                     </div>
+                    <div class="suggestion-filters" id="suggestion-filters">
+                        <div class="filter-header">
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-suggestion-filters"
+                                    aria-expanded="false" aria-controls="suggestion-filter-controls">
+                                Filters <span class="filter-badge" id="suggestion-filter-count">0</span>
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-reset-suggestion-filters">Reset</button>
+                        </div>
+                        <div class="filter-controls" id="suggestion-filter-controls" hidden>
+                            <label>Min PTO <input type="number" id="filter-min-pto" min="0" step="1"></label>
+                            <label>Max PTO <input type="number" id="filter-max-pto" min="0" step="1"></label>
+                            <label>Min impact <input type="number" id="filter-min-impact" min="0" step="0.1"></label>
+                            <label>From month <select id="filter-month-start"></select></label>
+                            <label>To month <select id="filter-month-end"></select></label>
+                            <label>Sort <select id="filter-sort">
+                                <option value="impact">Impact score</option>
+                                <option value="date">Date</option>
+                                <option value="pto_days">PTO days</option>
+                            </select></label>
+                            <fieldset class="category-filters">
+                                <legend>Categories</legend>
+                                <div id="filter-categories"></div>
+                            </fieldset>
+                        </div>
+                    </div>
                     <div class="suggestions-summary" id="suggestions-summary"></div>
                     <div class="suggestions-list" id="suggestions-list">
                         <div class="empty-state" id="empty-suggestions">
@@ -378,6 +403,7 @@
                                 <input type="date" id="vacation-end" name="end_date" required>
                             </div>
                         </div>
+                        <div class="vacation-warnings" id="vacation-warnings" role="status" aria-live="polite"></div>
                         <div class="form-group">
                             <label class="checkbox-label" for="vacation-auto-days">
                                 <input type="checkbox" id="vacation-auto-days" name="auto_days" checked>
