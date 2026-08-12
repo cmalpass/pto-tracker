@@ -42,6 +42,11 @@ class VacationOverlapTests(unittest.TestCase):
             self.assertEqual(payload['conflicts'][0]['name'], 'Partial base')
             self.assertIn('overlap', payload['error'])
 
+    def test_unpadded_dates_are_rejected_before_overlap_check(self):
+        response = self.add('Unpadded', '2026-8-03', '2026-8-07')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('yyyy-mm-dd', response.get_json()['error'])
+
     def test_update_rejects_overlap_but_allows_self(self):
         first = self.add('First', '2026-09-01', '2026-09-03').get_json()
         second = self.add('Second', '2026-09-07', '2026-09-09').get_json()
@@ -79,6 +84,24 @@ class VacationOverlapTests(unittest.TestCase):
 
         self.assertEqual(used_2026, 4)
         self.assertEqual(used_2027, 5)
+
+    def test_update_restores_only_legacy_booking_contribution(self):
+        with app_module.app.app_context():
+            db = app_module.get_db()
+            db.executemany(
+                'INSERT INTO vacations (name, start_date, end_date, days, hours) VALUES (?, ?, ?, ?, ?)',
+                [
+                    ('Earlier', '2026-08-01', '2026-08-07', 5, 0),
+                    ('Base', '2026-08-03', '2026-08-11', 7, 0),
+                ],
+            )
+            db.commit()
+            existing = db.execute('SELECT * FROM vacations WHERE name = ?', ('Base',)).fetchone()
+            contribution = app_module._existing_booking_amount_through(
+                existing, date(2026, 12, 31), app_module.get_config()
+            )
+
+        self.assertEqual(contribution, 2)
 
 
 if __name__ == '__main__':
