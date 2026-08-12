@@ -143,6 +143,31 @@ async def test_settings_save():
         await browser.close()
 
 
+async def test_holiday_country_configuration(request_context):
+    """Verify country-specific holidays and invalid-country validation."""
+    headers = await csrf_headers(request_context)
+    config_response = await request_context.get('/api/config')
+    config = await config_response.json()
+    assert config['holiday_country'] == 'US'
+
+    invalid = await request_context.put('/api/config', headers=headers, data={'holiday_country': 'ZZ'})
+    assert invalid.status == 400
+
+    updated = await request_context.put('/api/config', headers=headers, data={'holiday_country': 'GB'})
+    assert updated.status == 200
+    assert (await updated.json())['config']['holiday_country'] == 'GB'
+
+    calendar = await request_context.get(f'/api/calendar/{TEST_YEAR}')
+    events = await calendar.json()
+    holiday_names = {event['name'] for event in events['events'] if event['type'] == 'holiday'}
+    assert 'Good Friday' in holiday_names
+
+    restored = await request_context.put('/api/config', headers=headers, data={'holiday_country': 'US'})
+    assert restored.status == 200
+    await request_context.put('/api/config', headers=headers, data={'holiday_country': 'not-a-country'})
+    assert (await (await request_context.get('/api/config')).json())['holiday_country'] == 'US'
+
+
 async def test_chart_rendering():
     """Verify forecast chart displays data."""
     async with async_playwright() as p:
@@ -295,11 +320,12 @@ async def test_vacation_warning_controls_render():
 
 async def test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days(request_context):
     """Verify stats keep the entry count while exposing scheduled PTO days."""
+    headers = await csrf_headers(request_context)
     start_date = date.today() + timedelta(days=7)
     while start_date.weekday() != 0:
         start_date += timedelta(days=1)
     end_date = start_date + timedelta(days=4)
-    vacation = await request_context.post('/api/vacations', headers=await csrf_headers(request_context), data={
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
         'name': 'Stats Regression',
         'start_date': start_date.isoformat(),
         'end_date': end_date.isoformat(),
@@ -354,6 +380,7 @@ async def reset_database(request_context):
     for note in await notes_response.json():
         await request_context.delete(f"/api/notes/{note['id']}", headers=headers)
     await request_context.put('/api/config', headers=headers, data={
+        'holiday_country': 'US',
         'pto_accrual_per_pay_period': 1.0,
         'pto_accrual_type': 'days',
         'pto_hours_per_day': 8,
@@ -374,6 +401,7 @@ async def run_isolated_tests():
         test_calendar_shows_holidays,
         test_forecast_table,
         test_settings_save,
+        test_holiday_country_configuration,
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
@@ -391,6 +419,7 @@ async def run_isolated_tests():
                 try:
                     if test in {
                         test_export_and_note_validation,
+                        test_holiday_country_configuration,
                         test_smart_warnings_and_suggestion_filters,
                         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
                     }:
