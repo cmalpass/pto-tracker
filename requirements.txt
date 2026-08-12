@@ -1,4 +1,5 @@
 flask==3.1.0
+gunicorn==23.0.0
 holidays==0.68
 openpyxl==3.1.5
 # Playwright is used by the browser integration tests.
