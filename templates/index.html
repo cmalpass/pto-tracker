@@ -268,6 +268,18 @@
                     <button class="btn btn-icon modal-close" id="btn-close-settings">&times;</button>
                 </div>
                 <div class="modal-body">
+                    <section class="policy-wizard" aria-labelledby="policy-wizard-title">
+                        <h3 id="policy-wizard-title">Policy setup wizard</h3>
+                        <p class="setting-description">Choose a preset to preview a complete policy before applying it. Your current settings stay unchanged until you confirm.</p>
+                        <div class="wizard-controls">
+                            <select id="policy-preset" aria-label="Policy preset">
+                                <option value="">Choose a policy preset</option>
+                            </select>
+                            <button type="button" class="btn btn-secondary" id="btn-preview-policy">Preview</button>
+                        </div>
+                        <div id="policy-preview" class="policy-preview" hidden></div>
+                        <button type="button" class="btn btn-primary" id="btn-apply-policy" hidden>Apply preset</button>
+                    </section>
                     <form id="settings-form" class="settings-form">
                         <div class="form-group">
                             <label for="accrual-type">Accrual Type</label>

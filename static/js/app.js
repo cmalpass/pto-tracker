@@ -689,6 +689,8 @@ function setupSettings() {
     document.getElementById('settings-modal').addEventListener('click', (e) => {
         if (e.target === document.getElementById('settings-modal')) closeSettings();
     });
+    document.getElementById('btn-preview-policy').addEventListener('click', previewPolicy);
+    document.getElementById('btn-apply-policy').addEventListener('click', applyPolicy);
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const form = e.target;
@@ -715,6 +717,8 @@ async function openSettings() {
     try {
         const config = await API.get('/api/config');
         state.config = config;
+        await loadPolicyPresets();
+        resetPolicyPreview();
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
         document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
@@ -733,6 +737,62 @@ async function openSettings() {
 
 function closeSettings() {
     document.getElementById('settings-modal').classList.remove('active');
+}
+
+async function loadPolicyPresets() {
+    const presets = await API.get('/api/config/presets');
+    const select = document.getElementById('policy-preset');
+    select.replaceChildren(new Option('Choose a policy preset', ''));
+    Object.entries(presets).forEach(([id, preset]) => {
+        select.add(new Option(preset.name, id));
+    });
+    state.policyPresets = presets;
+}
+
+function resetPolicyPreview() {
+    document.getElementById('policy-preset').value = '';
+    const preview = document.getElementById('policy-preview');
+    preview.replaceChildren();
+    preview.hidden = true;
+    document.getElementById('btn-apply-policy').hidden = true;
+}
+
+function previewPolicy() {
+    const presetId = document.getElementById('policy-preset').value;
+    const preset = state.policyPresets?.[presetId];
+    if (!preset) {
+        showToast('Choose a policy preset to preview', 'error');
+        return;
+    }
+    const preview = document.getElementById('policy-preview');
+    preview.replaceChildren();
+    const heading = document.createElement('strong');
+    heading.textContent = preset.name;
+    const description = document.createElement('p');
+    description.textContent = preset.description;
+    const summary = document.createElement('p');
+    const settings = preset.settings;
+    summary.textContent = `${settings.pto_accrual_per_pay_period} ${settings.pto_accrual_type} per pay period, ${settings.pay_periods_per_year} pay periods/year, ${settings.pto_uses_rollover ? 'rollover enabled' : 'no rollover'}.`;
+    preview.append(heading, description, summary);
+    preview.hidden = false;
+    document.getElementById('btn-apply-policy').hidden = false;
+}
+
+async function applyPolicy() {
+    const presetId = document.getElementById('policy-preset').value;
+    const preset = state.policyPresets?.[presetId];
+    if (!preset) return;
+    if (!window.confirm(`Apply the "${preset.name}" preset? This will replace the current PTO settings.`)) return;
+    try {
+        await API.put('/api/config', preset.settings);
+        showToast('Policy preset applied!', 'success');
+        closeSettings();
+        loadDashboard();
+        loadForecast();
+        loadVacations();
+    } catch (err) {
+        showToast(err.message || 'Failed to apply policy preset', 'error');
+    }
 }
 
 async function loadForecast() {

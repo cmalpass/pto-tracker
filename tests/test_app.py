@@ -129,6 +129,22 @@ async def test_settings_save():
         await browser.close()
 
 
+async def test_policy_presets(request_context):
+    """Verify presets are safe to preview and persist through the config API."""
+    response = await request_context.get('/api/config/presets')
+    assert response.status == 200
+    presets = await response.json()
+    assert {'standard', 'generous', 'use-it-or-lose-it'} <= set(presets)
+    preset = presets['standard']['settings']
+    assert preset['pto_accrual_type'] == 'days'
+    assert preset['pay_periods_per_year'] == 26
+    saved = await request_context.put('/api/config', data=preset)
+    assert saved.status == 200
+    config = await (await request_context.get('/api/config')).json()
+    assert config['pto_accrual_type'] == 'days'
+    assert config['pto_uses_rollover'] is True
+
+
 async def test_chart_rendering():
     """Verify forecast chart displays data."""
     async with async_playwright() as p:
@@ -276,6 +292,7 @@ async def run_isolated_tests():
         test_calendar_shows_holidays,
         test_forecast_table,
         test_settings_save,
+        test_policy_presets,
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
@@ -288,7 +305,7 @@ async def run_isolated_tests():
             for test in tests:
                 await reset_database(request_context)
                 try:
-                    if test is test_export_and_note_validation:
+                    if test in {test_policy_presets, test_export_and_note_validation}:
                         await test(request_context)
                     else:
                         await test()

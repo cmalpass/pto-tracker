@@ -67,6 +67,64 @@ def default_config():
     }
 
 
+def config_presets():
+    """Return safe, local policy presets for the setup wizard."""
+    current_year = datetime.now().year
+    return {
+        'standard': {
+            'name': 'Standard PTO',
+            'description': 'A balanced US-style policy with prorated accrual and limited rollover.',
+            'settings': {
+                'pto_accrual_per_pay_period': 1.0,
+                'pto_accrual_type': 'days',
+                'pto_hours_per_day': 8,
+                'pto_holidays_require_pto': False,
+                'pay_periods_per_year': 26,
+                'accrual_start_date': f'{current_year}-01-01',
+                'accrual_method': 'pro-rata',
+                'pto_carryover_limit': 40,
+                'pto_uses_rollover': True,
+                'pto_lose_above_limit': True,
+                'pto_vesting_schedule': 'immediate',
+            },
+        },
+        'generous': {
+            'name': 'Generous Rollover',
+            'description': 'Higher accrual with rollover enabled and no automatic cap.',
+            'settings': {
+                'pto_accrual_per_pay_period': 1.5,
+                'pto_accrual_type': 'days',
+                'pto_hours_per_day': 8,
+                'pto_holidays_require_pto': False,
+                'pay_periods_per_year': 26,
+                'accrual_start_date': f'{current_year}-01-01',
+                'accrual_method': 'pro-rata',
+                'pto_carryover_limit': 80,
+                'pto_uses_rollover': True,
+                'pto_lose_above_limit': False,
+                'pto_vesting_schedule': 'immediate',
+            },
+        },
+        'use-it-or-lose-it': {
+            'name': 'Use It or Lose It',
+            'description': 'Accrual resets at year end with no rollover.',
+            'settings': {
+                'pto_accrual_per_pay_period': 1.0,
+                'pto_accrual_type': 'days',
+                'pto_hours_per_day': 8,
+                'pto_holidays_require_pto': False,
+                'pay_periods_per_year': 26,
+                'accrual_start_date': f'{current_year}-01-01',
+                'accrual_method': 'pro-rata',
+                'pto_carryover_limit': 0,
+                'pto_uses_rollover': False,
+                'pto_lose_above_limit': True,
+                'pto_vesting_schedule': 'immediate',
+            },
+        },
+    }
+
+
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(DATABASE)
@@ -771,6 +829,11 @@ def index():
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
     return jsonify(get_config())
+
+
+@app.route('/api/config/presets', methods=['GET'])
+def api_get_config_presets():
+    return jsonify(config_presets())
 
 
 @app.route('/api/config', methods=['PUT'])
