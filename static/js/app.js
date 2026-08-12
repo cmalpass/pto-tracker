@@ -53,7 +53,7 @@ async function parseResponse(res) {
 }
 
 function buildSuggestionPath() {
-    const params = new URLSearchParams({ year: String(new Date().getFullYear()) });
+    const params = new URLSearchParams({ year: String(state.currentYear) });
     const filters = state.suggestionFilters || {};
     const mapping = {
         minPto: 'min_pto_days',
@@ -148,6 +148,7 @@ const state = {
     calendarEvents: {},
     currentYear: new Date().getFullYear(),
     currentMonth: new Date().getMonth(),
+    today: null,
     forecastChart: null,
     forecastRequestId: 0,
     editingVacationId: null,
@@ -169,7 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupVacationList();
     setupCalendar();
     loadDashboard();
-    loadForecast();
 });
 
 function setupTabs() {
@@ -203,17 +203,20 @@ function setupThemeToggle() {
 }
 
 async function loadDashboard() {
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    document.getElementById('today-date').textContent = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    document.getElementById('current-month-name').textContent = MONTHS[now.getMonth()];
     try {
-        const [config, balance, stats] = await Promise.all([
-            API.get('/api/config'),
-            API.get(`/api/balance/${todayStr}`),
+        const config = await API.get('/api/config');
+        state.config = config;
+        state.today = config.current_date;
+        state.currentYear = config.current_year;
+        state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
+        loadForecast();
+        const now = parseIsoDateToLocal(state.today);
+        const [balance, stats] = await Promise.all([
+            API.get(`/api/balance/${config.current_date}`),
             API.get('/api/stats')
         ]);
-        state.config = config;
+        document.getElementById('today-date').textContent = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        document.getElementById('current-month-name').textContent = MONTHS[now.getMonth()];
         const unitLabel = config.pto_accrual_type === 'hours' ? 'hours available' : 'days available';
         const balanceLabel = document.querySelector('.balance-label');
         if (balanceLabel) balanceLabel.textContent = unitLabel;
@@ -245,17 +248,17 @@ async function loadDashboard() {
 }
 
 function currentDaysUsed() {
-    return new Date().getMonth();
+    return getTodayDate().getMonth();
 }
 
-function daysRemainingThisYear() {
-    const now = new Date();
-    const end = new Date(now.getFullYear(), 11, 31);
-    return Math.ceil((end - now) / 86400000);
+function daysRemainingThisYear(today = getTodayDate()) {
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const yearEndUtc = Date.UTC(today.getFullYear(), 11, 31);
+    return Math.round((yearEndUtc - todayUtc) / 86400000);
 }
 
 function renderMiniCalendar() {
-    const now = new Date();
+    const now = getTodayDate();
     const year = now.getFullYear();
     const month = now.getMonth();
     const container = document.getElementById('mini-calendar');
@@ -291,7 +294,7 @@ function setupCalendar() {
         renderCalendar();
     });
     document.getElementById('cal-today-btn').addEventListener('click', () => {
-        const now = new Date();
+        const now = getTodayDate();
         state.currentYear = now.getFullYear();
         state.currentMonth = now.getMonth();
         renderCalendar();
@@ -341,7 +344,7 @@ async function renderCalendar() {
         const firstDay = new Date(state.currentYear, state.currentMonth, 1).getDay();
         const daysInMonth = new Date(state.currentYear, state.currentMonth + 1, 0).getDate();
         const prevDays = new Date(state.currentYear, state.currentMonth, 0).getDate();
-        const today = new Date();
+        const today = getTodayDate();
         for (let i = firstDay - 1; i >= 0; i--) {
             html += `<div class="cal-day other-month"><span class="day-number">${prevDays - i}</span></div>`;
         }
@@ -570,6 +573,14 @@ function parseIsoDateToLocal(dateStr) {
     return new Date(year, month - 1, day);
 }
 
+function getTodayIsoDate() {
+    return state.today || new Date().toISOString().split('T')[0];
+}
+
+function getTodayDate() {
+    return parseIsoDateToLocal(getTodayIsoDate());
+}
+
 function toIsoDate(value) {
     if (!(value instanceof Date)) return '';
     const y = value.getFullYear();
@@ -584,7 +595,7 @@ function openCreateVacationModal(prefillDate = null) {
     document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
     document.getElementById('vacation-auto-days').checked = true;
     document.getElementById('vacation-modal').classList.add('active');
-    const selectedDate = prefillDate || new Date().toISOString().split('T')[0];
+    const selectedDate = prefillDate || getTodayIsoDate();
     document.getElementById('vacation-start').value = selectedDate;
     document.getElementById('vacation-end').value = selectedDate;
     syncVacationDateBounds();
@@ -887,7 +898,8 @@ async function openSettings() {
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
         document.getElementById('accrual-method').value = config.accrual_method || 'full';
         document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
-        document.getElementById('accrual-start').value = config.accrual_start_date || new Date().toISOString().split('T')[0];
+        document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
+        document.getElementById('timezone').value = config.timezone || 'UTC';
         document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
         document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
         document.getElementById('lose-limit').checked = config.pto_lose_above_limit !== false;
