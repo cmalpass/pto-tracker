@@ -16,6 +16,7 @@ const API = {
                 this.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
                 return this.request(path, options, false);
             }
+
         }
         const payload = await res.json();
         if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
@@ -51,6 +52,95 @@ async function parseResponse(res) {
     return data;
 }
 
+function buildSuggestionPath() {
+    const params = new URLSearchParams({ year: String(new Date().getFullYear()) });
+    const filters = state.suggestionFilters || {};
+    const mapping = {
+        minPto: 'min_pto_days',
+        maxPto: 'max_pto_days',
+        minImpact: 'min_impact',
+        monthStart: 'month_start',
+        monthEnd: 'month_end',
+        sortBy: 'sort_by'
+    };
+    Object.entries(mapping).forEach(([key, queryKey]) => {
+        if (filters[key] !== null && filters[key] !== undefined && filters[key] !== '') {
+            params.set(queryKey, filters[key]);
+        }
+    });
+    if (filters.categories?.length) params.set('categories', filters.categories.join(','));
+    return `/api/vacations/suggestions?${params.toString()}`;
+}
+
+function renderSuggestionFilters(availableCategories) {
+    const months = ['Any month', ...MONTHS];
+    ['filter-month-start', 'filter-month-end'].forEach(id => {
+        const select = document.getElementById(id);
+        if (!select || select.options.length) return;
+        select.innerHTML = months.map((month, index) => `<option value="${index}">${month}</option>`).join('');
+    });
+    const filters = state.suggestionFilters || {};
+    const values = {
+        'filter-min-pto': filters.minPto || '',
+        'filter-max-pto': filters.maxPto || '',
+        'filter-min-impact': filters.minImpact || '',
+        'filter-month-start': filters.monthStart || 0,
+        'filter-month-end': filters.monthEnd || 0,
+        'filter-sort': filters.sortBy || 'impact'
+    };
+    Object.entries(values).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.value = value;
+    });
+    const categoryContainer = document.getElementById('filter-categories');
+    if (categoryContainer) {
+        categoryContainer.innerHTML = availableCategories.map(category => `
+            <label><input type="checkbox" value="${escapeHtml(category)}"
+                ${filters.categories?.includes(category) ? 'checked' : ''}> ${escapeHtml(category.replace('-', ' '))}</label>
+        `).join('');
+    }
+    const activeCount = ['minPto', 'maxPto', 'minImpact', 'monthStart', 'monthEnd']
+        .filter(key => filters[key] !== null && filters[key] !== undefined && filters[key] !== '').length
+        + (filters.categories?.length || 0)
+        + (filters.sortBy && filters.sortBy !== 'impact' ? 1 : 0);
+    const count = document.getElementById('suggestion-filter-count');
+    if (count) count.textContent = activeCount;
+}
+
+function updateSuggestionFilters() {
+    const numberValue = id => {
+        const value = document.getElementById(id)?.value;
+        return value === '' ? null : Number(value);
+    };
+    state.suggestionFilters = {
+        minPto: numberValue('filter-min-pto'),
+        maxPto: numberValue('filter-max-pto'),
+        minImpact: numberValue('filter-min-impact'),
+        monthStart: numberValue('filter-month-start') || null,
+        monthEnd: numberValue('filter-month-end') || null,
+        categories: [...document.querySelectorAll('#filter-categories input:checked')].map(input => input.value),
+        sortBy: document.getElementById('filter-sort')?.value || 'impact'
+    };
+    localStorage.setItem('pto-suggestion-filters', JSON.stringify(state.suggestionFilters));
+    renderSuggestionFilters(state.vacationSuggestions?.available_categories || []);
+    clearTimeout(state.suggestionAnalysisTimer);
+    state.suggestionAnalysisTimer = setTimeout(async () => {
+        try {
+            state.vacationSuggestions = await API.get(buildSuggestionPath());
+            renderSuggestionFilters(state.vacationSuggestions.available_categories || []);
+            renderVacationSuggestions();
+        } catch (err) {
+            showToast(err.message || 'Failed to filter suggestions', 'error');
+        }
+    }, 250);
+}
+
+function resetSuggestionFilters() {
+    state.suggestionFilters = { categories: [], sortBy: 'impact' };
+    localStorage.setItem('pto-suggestion-filters', JSON.stringify(state.suggestionFilters));
+    loadVacations();
+}
+
 const state = {
     config: {},
     vacations: [],
@@ -65,7 +155,10 @@ const state = {
     heatmapRequestId: 0,
     editingVacationId: null,
     vacationCalcRequestId: 0,
-    vacationSuggestions: null
+    vacationSuggestions: null,
+    suggestionFilters: JSON.parse(localStorage.getItem('pto-suggestion-filters') || '{"categories":[],"sortBy":"impact"}'),
+    suggestionAnalysisTimer: null,
+    vacationAnalysisRequestId: 0
 };
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -287,10 +380,11 @@ async function loadVacations() {
     try {
         const [vacations, suggestions] = await Promise.all([
             API.get('/api/vacations'),
-            API.get(`/api/vacations/suggestions?year=${new Date().getFullYear()}`)
+            API.get(buildSuggestionPath())
         ]);
         state.vacations = vacations;
         state.vacationSuggestions = suggestions;
+        renderSuggestionFilters(suggestions.available_categories || []);
         renderVacationsList();
         renderVacationSuggestions();
     } catch (err) {
@@ -563,6 +657,10 @@ function setupVacationModal() {
     });
     document.getElementById('vacation-hours').addEventListener('change', calcVacationDays);
     document.getElementById('vacation-auto-days').addEventListener('change', calcVacationDays);
+    ['vacation-start', 'vacation-end', 'vacation-days', 'vacation-hours'].forEach(id => {
+        document.getElementById(id).addEventListener('input', scheduleVacationAnalysis);
+        document.getElementById(id).addEventListener('change', scheduleVacationAnalysis);
+    });
     document.getElementById('vacation-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const form = e.target;
@@ -577,11 +675,13 @@ function setupVacationModal() {
         };
         try {
             if (state.editingVacationId) {
-                await API.put(`/api/vacations/${state.editingVacationId}`, data);
+                const response = await API.put(`/api/vacations/${state.editingVacationId}`, data);
                 showToast('Vacation updated!', 'success');
+                showWarningToast(response.warnings);
             } else {
-                await API.post('/api/vacations', data);
+                const response = await API.post('/api/vacations', data);
                 showToast('Vacation added!', 'success');
+                showWarningToast(response.warnings);
             }
             closeVacationModal();
             loadVacations();
@@ -589,7 +689,7 @@ function setupVacationModal() {
             loadForecast();
             renderCalendar();
         } catch (err) {
-            showToast('Failed to save vacation', 'error');
+            showToast(err.message || 'Failed to save vacation', 'error');
         }
     });
 
@@ -597,7 +697,8 @@ function setupVacationModal() {
     if (refreshBtn) {
         refreshBtn.addEventListener('click', async () => {
             try {
-                state.vacationSuggestions = await API.get(`/api/vacations/suggestions?year=${new Date().getFullYear()}`);
+                state.vacationSuggestions = await API.get(buildSuggestionPath());
+                renderSuggestionFilters(state.vacationSuggestions.available_categories || []);
                 renderVacationSuggestions();
                 showToast('Suggestions refreshed', 'success');
             } catch (err) {
@@ -617,6 +718,64 @@ function setupVacationModal() {
             await addSuggestedVacation(index);
         });
     }
+    document.getElementById('btn-toggle-suggestion-filters')?.addEventListener('click', (event) => {
+        const controls = document.getElementById('suggestion-filter-controls');
+        const expanded = event.currentTarget.getAttribute('aria-expanded') === 'true';
+        event.currentTarget.setAttribute('aria-expanded', String(!expanded));
+        controls.hidden = expanded;
+    });
+    document.getElementById('btn-reset-suggestion-filters')?.addEventListener('click', resetSuggestionFilters);
+    document.getElementById('suggestion-filter-controls')?.addEventListener('change', updateSuggestionFilters);
+}
+
+function scheduleVacationAnalysis() {
+    clearTimeout(state.suggestionAnalysisTimer);
+    state.suggestionAnalysisTimer = setTimeout(analyzeVacation, 300);
+}
+
+async function analyzeVacation() {
+    const form = document.getElementById('vacation-form');
+    const start = form.start_date.value;
+    const end = form.end_date.value;
+    if (!start || !end || end < start) {
+        renderVacationWarnings([]);
+        return;
+    }
+    const requestId = ++state.vacationAnalysisRequestId;
+    try {
+        const result = await API.post('/api/vacations/analyze', {
+            start_date: start,
+            end_date: end,
+            days: Number(form.days.value) || 0,
+            hours: Number(form.hours.value) || 0,
+            vacation_id: state.editingVacationId
+        });
+        if (requestId === state.vacationAnalysisRequestId) renderVacationWarnings(result.warnings, result.hints);
+    } catch (err) {
+        if (requestId === state.vacationAnalysisRequestId) renderVacationWarnings([{
+            severity: 'error', message: err.message || 'Unable to analyze this vacation.'
+        }]);
+    }
+}
+
+function renderVacationWarnings(warnings = [], hints = []) {
+    const container = document.getElementById('vacation-warnings');
+    if (!container) return;
+    container.innerHTML = [...warnings, ...hints].map(item => `
+        <div class="vacation-warning ${item.severity || 'info'}">
+            <span>${escapeHtml(item.message)}</span>
+            ${item.start_date ? `<button type="button" class="warning-apply" data-start="${item.start_date}" data-end="${item.end_date}">Apply</button>` : ''}
+        </div>
+    `).join('');
+    container.querySelectorAll('.warning-apply').forEach(button => {
+        button.addEventListener('click', () => {
+            document.getElementById('vacation-start').value = button.dataset.start;
+            document.getElementById('vacation-end').value = button.dataset.end;
+            syncVacationDateBounds();
+            calcVacationDays();
+            scheduleVacationAnalysis();
+        });
+    });
 }
 
 function syncVacationDateBounds() {
@@ -709,14 +868,15 @@ function setupSettings() {
             else data[el.name] = el.value;
         }
         try {
-            await API.put('/api/config', data);
+            const response = await API.put('/api/config', data);
             showToast('Settings saved!', 'success');
+            showWarningToast(response.warnings);
             closeSettings();
             loadDashboard();
             loadForecast();
             loadVacations();
         } catch (err) {
-            showToast('Failed to save settings', 'error');
+            showToast(err.message || 'Failed to save settings', 'error');
         }
     });
 }
@@ -960,4 +1120,13 @@ function showToast(message, type = '') {
     toast.textContent = message;
     toast.className = 'toast show ' + type;
     setTimeout(() => { toast.classList.remove('show'); }, 3000);
+}
+
+function showWarningToast(warnings = []) {
+    const warning = warnings.find(item => item.severity === 'error' || item.severity === 'warning');
+    if (warning) {
+        setTimeout(() => {
+            showToast(warning.message, warning.severity === 'error' ? 'error' : 'warning');
+        }, 3200);
+    }
 }
