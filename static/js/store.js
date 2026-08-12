@@ -145,15 +145,23 @@
 
     function idbRequest(db, storeName, mode, operation) {
         return new Promise((resolve, reject) => {
+            let transaction;
             let request;
+            let result;
             try {
-                request = operation(db.transaction(storeName, mode).objectStore(storeName));
+                transaction = db.transaction(storeName, mode);
+                request = operation(transaction.objectStore(storeName));
             } catch (error) {
                 reject(error);
                 return;
             }
-            request.onsuccess = () => resolve(clone(request.result));
+            request.onsuccess = () => {
+                result = request.result;
+            };
             request.onerror = () => reject(request.error);
+            transaction.oncomplete = () => resolve(clone(result));
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
         });
     }
 
