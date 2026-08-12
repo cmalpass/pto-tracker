@@ -1,28 +1,41 @@
 /** PTO Tracker - Main Application */
 const API = {
+    authHeader: null,
+    async request(path, options = {}, allowAuthPrompt = true) {
+        const headers = { ...(options.headers || {}) };
+        if (this.authHeader) headers.Authorization = this.authHeader;
+        const res = await fetch(path, { ...options, headers });
+        if (res.status === 401 && options.method && allowAuthPrompt) {
+            const username = window.prompt('PTO Tracker username:');
+            const password = username === null ? null : window.prompt('PTO Tracker password:');
+            if (username && password !== null) {
+                this.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+                return this.request(path, options, false);
+            }
+        }
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
+        return payload;
+    },
     async get(path) {
-        const res = await fetch(path);
-        return parseResponse(res);
+        return this.request(path);
     },
     async post(path, data) {
-        const res = await fetch(path, {
+        return this.request(path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return parseResponse(res);
     },
     async put(path, data) {
-        const res = await fetch(path, {
+        return this.request(path, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return parseResponse(res);
     },
     async delete(path) {
-        const res = await fetch(path, { method: 'DELETE' });
-        return parseResponse(res);
+        return this.request(path, { method: 'DELETE' });
     }
 };
 
@@ -56,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupTabs();
     setupSettings();
     setupVacationModal();
+    setupVacationList();
     setupCalendar();
     loadDashboard();
     loadForecast();
@@ -306,13 +320,13 @@ function renderVacationsList() {
                 </div>
                 <div class="vacation-days">${usageText}</div>
                 <div class="vacation-actions">
-                    <button class="vacation-edit" onclick="editVacation(${v.id})" title="Edit">
+                    <button class="vacation-edit" data-vacation-id="${v.id}" title="Edit">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 20h9"></path>
                             <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
                         </svg>
                     </button>
-                    <button class="vacation-delete" onclick="deleteVacation(${v.id})" title="Delete">
+                    <button class="vacation-delete" data-vacation-id="${v.id}" title="Delete">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -492,6 +506,16 @@ function editVacation(id) {
     document.getElementById('vacation-auto-days').checked = (vacation.days || 0) > 0;
     calcVacationDays();
     document.getElementById('vacation-modal').classList.add('active');
+}
+
+function setupVacationList() {
+    document.getElementById('vacations-list').addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-vacation-id]');
+        if (!button) return;
+        const id = Number(button.dataset.vacationId);
+        if (button.classList.contains('vacation-edit')) editVacation(id);
+        if (button.classList.contains('vacation-delete')) deleteVacation(id);
+    });
 }
 
 async function deleteVacation(id) {
