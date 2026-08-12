@@ -888,7 +888,12 @@ async function loadHeatmap() {
         legend.hidden = false;
         legend.innerHTML = '<span>Lower value</span><span class="heatmap-gradient"></span><span>Higher value</span><span class="heatmap-legend-note">Score = days off per PTO day</span>';
         grid.querySelectorAll('.heatmap-cell').forEach(cell => cell.addEventListener('click', () => {
+            const heatmapYear = Number(select.value);
             const day = parseIsoDateToLocal(cell.dataset.date);
+            if (day.getFullYear() !== heatmapYear) {
+                day.setFullYear(heatmapYear, day < new Date(heatmapYear, 0, 1) ? 0 : 11,
+                    day < new Date(heatmapYear, 0, 1) ? 1 : 31);
+            }
             state.currentYear = day.getFullYear();
             state.currentMonth = day.getMonth();
             document.querySelector('.nav-tab[data-tab="calendar"]').click();

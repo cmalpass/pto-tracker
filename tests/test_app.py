@@ -190,6 +190,23 @@ async def test_multi_year_forecast_and_heatmap(request_context):
     assert any(week['already_booked'] for week in (await booked_heatmap.json())['weeks'])
 
 
+async def test_heatmap_boundary_navigation():
+    """Verify boundary heatmap weeks stay within the selected calendar year."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        await page.click("button:has-text('Best Weeks')")
+        await page.wait_for_selector(".heatmap-cell", timeout=10000)
+        await page.locator(".heatmap-cell").first.click()
+        assert str(TEST_YEAR) in (await page.locator("#calendar-title").text_content())
+        await page.click("button:has-text('Best Weeks')")
+        await page.wait_for_selector(".heatmap-cell", timeout=10000)
+        await page.locator(".heatmap-cell").last.click()
+        assert str(TEST_YEAR) in (await page.locator("#calendar-title").text_content())
+        await browser.close()
+
+
 async def test_delete_vacation():
     """Verify vacation deletion works end-to-end."""
     async with async_playwright() as p:
@@ -295,6 +312,7 @@ async def main():
         test_forecast_table,
         test_settings_save,
         test_chart_rendering,
+        test_heatmap_boundary_navigation,
         test_delete_vacation,
         test_export_and_note_validation,
     ]
@@ -345,6 +363,7 @@ async def run_isolated_tests():
         test_settings_save,
         test_chart_rendering,
         test_multi_year_forecast_and_heatmap,
+        test_heatmap_boundary_navigation,
         test_delete_vacation,
         test_export_and_note_validation,
         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
