@@ -9,6 +9,7 @@ A modern web application to calculate, track, and forecast accrued Paid Time Off
 - Add/delete planned vacations with auto-calculated business days
 - Chart.js forecast visualization with monthly breakdown
 - Configurable accrual rates, pay periods, carryover limits
+- Configurable IANA timezone for local date and year boundaries
 
 ## Tech Stack
 
@@ -45,6 +46,13 @@ State-changing browser requests use a same-origin CSRF cookie and header token. 
 cookie-less API clients, set `PTO_API_KEY` and send `Authorization: Bearer <key>`.
 When `PTO_REQUIRE_AUTH=true`, valid configured Basic Auth credentials also identify
 cookie-less API requests.
+### Date and timezone behavior
+
+Vacation dates are persisted as canonical `YYYY-MM-DD` date strings and are never
+converted between timezones. The app uses the configured IANA timezone only when
+calculating the current local date, current year, balances, forecasts, statistics,
+suggestions, exports, and frontend defaults. The safe default is `UTC`; configure
+another timezone in Settings (for example, `America/New_York`).
 
 ### macOS Port 5000 Conflict (AirPlay Receiver / Control Center)
 

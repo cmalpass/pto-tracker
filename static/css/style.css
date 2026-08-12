@@ -853,6 +853,120 @@ body {
     background: rgba(99, 102, 241, 0.02);
 }
 
+/* Forecast comparisons and weekly value heatmap */
+.section-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+.forecast-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.multi-year-container {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.year-column {
+    position: relative;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 1rem;
+}
+
+.year-column h3 {
+    color: var(--primary);
+    margin-bottom: 0.75rem;
+}
+
+.year-metric {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.35rem 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.year-metric strong {
+    color: var(--text);
+}
+
+.forfeit-metric strong {
+    color: var(--danger);
+}
+
+.rollover-arrow {
+    position: absolute;
+    right: -1.25rem;
+    top: 50%;
+    color: var(--success);
+    font-size: 1.5rem;
+    z-index: 1;
+}
+
+.multi-year-chart-container {
+    height: 280px;
+    margin-top: 1.5rem;
+}
+
+.heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
+    gap: 0.45rem;
+}
+
+.heatmap-cell {
+    min-height: 42px;
+    border: 2px solid transparent;
+    border-radius: var(--radius-sm);
+    background: var(--heatmap-color);
+    color: #334155;
+    cursor: pointer;
+    font-weight: 700;
+    transition: transform 0.15s, border-color 0.15s;
+}
+
+.heatmap-cell:hover,
+.heatmap-cell:focus-visible {
+    border-color: var(--primary);
+    outline: none;
+    transform: scale(1.08);
+}
+
+.heatmap-cell.booked {
+    background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.35) 0 4px, transparent 4px 8px);
+}
+
+.heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-top: 1rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    flex-wrap: wrap;
+}
+
+.heatmap-gradient {
+    width: 160px;
+    height: 12px;
+    border-radius: var(--radius-full);
+    background: linear-gradient(90deg, hsl(210, 85%, 88%), hsl(35, 85%, 53%));
+}
+
+.heatmap-legend-note {
+    flex-basis: 100%;
+}
+
 /* Modals */
 .modal-overlay {
     display: none;
@@ -918,6 +1032,46 @@ body {
     margin-top: 1.5rem;
     padding-top: 1.5rem;
     border-top: 1px solid var(--border);
+}
+
+.policy-wizard {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+}
+
+.policy-wizard h3 {
+    margin-bottom: 0.35rem;
+}
+
+.wizard-controls {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.wizard-controls select {
+    flex: 1;
+    min-width: 0;
+}
+
+.policy-preview {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border-left: 3px solid var(--primary);
+    background: var(--card);
+}
+
+.policy-preview p {
+    margin: 0.35rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.policy-wizard #btn-apply-policy {
+    margin-top: 0.75rem;
 }
 
 /* Toast Notifications */
@@ -1172,6 +1326,23 @@ input:checked + .toggle-slider:before {
         flex-direction: row;
         justify-content: space-between;
         align-items: center;
+    }
+
+    .multi-year-container {
+        grid-template-columns: 1fr;
+    }
+
+    .rollover-arrow {
+        right: auto;
+        left: 50%;
+        top: auto;
+        bottom: -1.5rem;
+        transform: rotate(90deg);
+    }
+
+    .forecast-controls {
+        flex-wrap: wrap;
+        justify-content: flex-end;
     }
 }
 

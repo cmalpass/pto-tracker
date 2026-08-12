@@ -7,7 +7,9 @@ import calendar
 import hmac
 import secrets
 import logging
+from itertools import combinations
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
@@ -20,6 +22,7 @@ DATABASE = os.environ.get(
     os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
 )
 logger = logging.getLogger(__name__)
+DEFAULT_TIMEZONE = 'UTC'
 
 NUMERIC_CONFIG_KEYS = {
     'pto_accrual_per_pay_period',
@@ -35,6 +38,7 @@ BOOLEAN_CONFIG_KEYS = {
     'pto_lose_above_limit',
 }
 VALID_CONFIG_KEYS = {
+    'holiday_country',
     'pto_accrual_per_pay_period',
     'pto_accrual_type',
     'pto_hours_per_day',
@@ -49,26 +53,113 @@ VALID_CONFIG_KEYS = {
     'pto_start_year',
     'pto_vesting_schedule',
     'pto_grace_period_days',
+    'timezone',
 }
+
+DEFAULT_HOLIDAY_COUNTRY = 'US'
 
 
 def default_config():
     return {
+        'holiday_country': DEFAULT_HOLIDAY_COUNTRY,
         'pto_accrual_per_pay_period': '1.0',
         'pto_accrual_type': 'days',
         'pto_hours_per_day': '8',
         'pto_holidays_require_pto': 'true',
         'pay_periods_per_year': '26',
-        'accrual_start_date': f'{datetime.now().year}-01-01',
+        'accrual_start_date': f'{datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).year}-01-01',
         'accrual_method': 'pro-rata',
         'pto_carryover_limit': '40',
         'pto_uses_rollover': 'true',
         'pto_cashout_rate': '0',
         'pto_lose_above_limit': 'true',
-        'pto_start_year': str(datetime.now().year),
+        'pto_start_year': str(datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).year),
         'pto_vesting_schedule': 'immediate',
         'pto_grace_period_days': '0',
+        'timezone': DEFAULT_TIMEZONE,
     }
+
+
+def config_presets():
+    """Return safe, local policy presets for the setup wizard."""
+    current_year = datetime.now().year
+    return {
+        'standard': {
+            'name': 'Standard PTO',
+            'description': 'A balanced US-style policy with prorated accrual and limited rollover.',
+            'settings': {
+                'pto_accrual_per_pay_period': 1.0,
+                'pto_accrual_type': 'days',
+                'pto_hours_per_day': 8,
+                'pto_holidays_require_pto': False,
+                'pay_periods_per_year': 26,
+                'accrual_start_date': f'{current_year}-01-01',
+                'accrual_method': 'pro-rata',
+                'pto_carryover_limit': 40,
+                'pto_uses_rollover': True,
+                'pto_lose_above_limit': True,
+                'pto_vesting_schedule': 'immediate',
+            },
+        },
+        'generous': {
+            'name': 'Generous Rollover',
+            'description': 'Higher accrual with rollover enabled and no automatic cap.',
+            'settings': {
+                'pto_accrual_per_pay_period': 1.5,
+                'pto_accrual_type': 'days',
+                'pto_hours_per_day': 8,
+                'pto_holidays_require_pto': False,
+                'pay_periods_per_year': 26,
+                'accrual_start_date': f'{current_year}-01-01',
+                'accrual_method': 'pro-rata',
+                'pto_carryover_limit': 80,
+                'pto_uses_rollover': True,
+                'pto_lose_above_limit': False,
+                'pto_vesting_schedule': 'immediate',
+            },
+        },
+        'use-it-or-lose-it': {
+            'name': 'Use It or Lose It',
+            'description': 'Accrual resets at year end with no rollover.',
+            'settings': {
+                'pto_accrual_per_pay_period': 1.0,
+                'pto_accrual_type': 'days',
+                'pto_hours_per_day': 8,
+                'pto_holidays_require_pto': False,
+                'pay_periods_per_year': 26,
+                'accrual_start_date': f'{current_year}-01-01',
+                'accrual_method': 'pro-rata',
+                'pto_carryover_limit': 0,
+                'pto_uses_rollover': False,
+                'pto_lose_above_limit': True,
+                'pto_vesting_schedule': 'immediate',
+            },
+        },
+    }
+
+def get_configured_timezone(config=None):
+    """Return the configured timezone, falling back safely to UTC."""
+    timezone_name = (config or {}).get('timezone', DEFAULT_TIMEZONE)
+    if not isinstance(timezone_name, str):
+        timezone_name = DEFAULT_TIMEZONE
+    timezone_name = timezone_name.strip()
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning('Invalid timezone config %r; using %s', timezone_name, DEFAULT_TIMEZONE)
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def get_local_now(config=None):
+    return datetime.now(get_configured_timezone(config))
+
+
+def get_local_today(config=None):
+    return get_local_now(config).date()
+
+
+def get_local_year(config=None):
+    return get_local_now(config).year
 
 
 def get_db():
@@ -136,8 +227,17 @@ def get_config():
                 config[key] = fallback
         elif key in BOOLEAN_CONFIG_KEYS:
             config[key] = value.lower() == 'true'
+        elif key == 'timezone':
+            try:
+                config[key] = ZoneInfo(str(value).strip()).key
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning('Invalid timezone config %r; using %s', value, DEFAULT_TIMEZONE)
+                config[key] = DEFAULT_TIMEZONE
         else:
             config[key] = value
+    config['holiday_country'] = normalize_holiday_country(
+        config.get('holiday_country')
+    )
     return config
 
 
@@ -222,8 +322,34 @@ def set_security_headers(response):
     return response
 
 
-def get_us_holidays(year):
-    return holidays.US(years=year, observed=True)
+def normalize_holiday_country(value):
+    """Return a supported ISO country code, falling back to the US."""
+    if not isinstance(value, str):
+        return DEFAULT_HOLIDAY_COUNTRY
+    country = value.strip().upper()
+    if country not in holidays.list_supported_countries():
+        return DEFAULT_HOLIDAY_COUNTRY
+    return country
+
+
+def validate_holiday_country(value):
+    """Validate a user-supplied country code without contacting external services."""
+    if not isinstance(value, str):
+        return None
+    country = value.strip().upper()
+    if country not in holidays.list_supported_countries():
+        return None
+    return country
+
+
+def get_holidays(year, config):
+    """Return observed holidays for the configured country using the local library."""
+    country = normalize_holiday_country(config.get('holiday_country'))
+    try:
+        return holidays.country_holidays(country, years=year, observed=True)
+    except (KeyError, NotImplementedError, TypeError, ValueError):
+        logger.warning('Unable to load holidays for %s; using %s', country, DEFAULT_HOLIDAY_COUNTRY)
+        return holidays.country_holidays(DEFAULT_HOLIDAY_COUNTRY, years=year, observed=True)
 
 
 def is_business_day(date):
@@ -237,7 +363,7 @@ def get_vacation_days(start_date, end_date, config):
     holidays_set = set()
     if not holidays_require_pto:
         for year in range(start.year, end.year + 1):
-            holidays_set.update(get_us_holidays(year))
+            holidays_set.update(get_holidays(year, config))
     days = 0
     current = start
     while current <= end:
@@ -277,7 +403,7 @@ def calculate_accrual_to_date(target_date, config):
     if config['accrual_method'] == 'pro-rata':
         holidays_set = set()
         for y in range(accrual_start.year, target.year + 1):
-            holidays_set.update(get_us_holidays(y))
+            holidays_set.update(get_holidays(y, config))
         business_days_worked = _count_business_days(accrual_start, target, holidays_set)
         accrual_per_day = config['pto_accrual_per_pay_period'] / (pay_period_days * 5 / 7)
         accrued = business_days_worked * accrual_per_day
@@ -489,10 +615,153 @@ def generate_yearly_forecast(year, config):
     return forecast
 
 
+def generate_multi_year_forecast(start_year, years, config):
+    """Return bounded yearly summaries while preserving the existing balance math."""
+    results = []
+    for year in range(start_year, start_year + years):
+        monthly = generate_yearly_forecast(year, config)
+        year_start = date(year, 1, 1)
+        year_end = date(year, 12, 31)
+        year_accrued = (
+            calculate_accrual_to_date(year_end.strftime('%Y-%m-%d'), config)
+            - calculate_accrual_to_date(
+                (year_start - timedelta(days=1)).strftime('%Y-%m-%d'), config
+            )
+        )
+        used_days, used_hours = calculate_vacation_usage_in_range(
+            year_start, year_end, config
+        )
+        hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
+        used_amount = (
+            (used_days * hours_per_day) + used_hours
+            if config.get('pto_accrual_type') == 'hours'
+            else used_days + (used_hours / hours_per_day)
+        )
+        year_end_balance = monthly[-1]['balance']
+        limit = monthly[-1]['limit']
+        if not config.get('pto_uses_rollover', True):
+            carryover = 0.0
+            forfeited = year_end_balance
+        elif config.get('pto_lose_above_limit', False):
+            carryover = min(year_end_balance, limit)
+            forfeited = max(0.0, year_end_balance - limit)
+        else:
+            carryover = year_end_balance
+            forfeited = 0.0
+        results.append({
+            'year': year,
+            'monthly_balances': [
+                {'month': entry['month'], 'month_number': index + 1,
+                 'month_name': entry['month_name'], 'balance': entry['balance']}
+                for index, entry in enumerate(monthly)
+            ],
+            'year_end_balance': year_end_balance,
+            'carryover': round(carryover, 2),
+            'forfeited': round(forfeited, 2),
+            'total_accrued': round(year_accrued, 2),
+            'total_used': round(used_amount, 2),
+            'limit': limit,
+        })
+    return results
+
+
+def _calculate_week_impact(week_start, week_end, holidays_map, booked_dates,
+                           holidays_require_pto, year):
+    holidays_set = set(holidays_map)
+    candidates = [
+        day for day in _daterange(week_start, week_end)
+        if day.year == year
+        and day.weekday() < 5
+        and day not in booked_dates
+        and (holidays_require_pto or day not in holidays_set)
+    ]
+
+    best = {}
+    for days_needed in range(1, min(3, len(candidates)) + 1):
+        best_result = {'score': 0.0, 'total_days_off': 0, 'pto_dates': []}
+        for selected in combinations(candidates, days_needed):
+            pto_dates = set(selected)
+            total_days_off = _continuous_days_off_count(
+                pto_dates,
+                holidays_set,
+                min_date=date(year, 1, 1),
+                max_date=date(year, 12, 31)
+            )
+            score = total_days_off / days_needed
+            if score > best_result['score']:
+                best_result = {
+                    'score': round(score, 2),
+                    'total_days_off': total_days_off,
+                    'pto_dates': [day.strftime('%Y-%m-%d') for day in selected],
+                }
+        best[days_needed] = best_result
+
+    holidays = sorted({
+        name for holiday_date, name in holidays_map.items()
+        if week_start <= holiday_date <= week_end
+    })
+    primary = best.get(1, {'score': 0.0, 'total_days_off': 0, 'pto_dates': []})
+    return {
+        'score': primary['score'],
+        'pto_days_needed': 1 if candidates else 0,
+        'total_days_off': primary['total_days_off'],
+        'best_pto_dates': primary['pto_dates'],
+        'best_two_day_score': best.get(2, {}).get('score', 0.0),
+        'best_three_day_score': best.get(3, {}).get('score', 0.0),
+        'holidays': holidays,
+        'already_booked': any(day in booked_dates for day in _daterange(week_start, week_end)),
+    }
+
+
+def generate_heatmap(year, config):
+    """Build at most 53 weekly candidates for an offline, bounded heatmap."""
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    first_week = year_start - timedelta(days=year_start.weekday())
+    last_week = year_end + timedelta(days=6 - year_end.weekday())
+    holiday_map = {}
+    for holiday_year in (year - 1, year, year + 1):
+        holiday_map.update(get_us_holidays(holiday_year))
+    db = get_db()
+    rows = db.execute(
+        'SELECT start_date, end_date FROM vacations '
+        'WHERE start_date <= ? AND end_date >= ?',
+        (year_end.strftime('%Y-%m-%d'), year_start.strftime('%Y-%m-%d'))
+    ).fetchall()
+    booked_dates = set()
+    for row in rows:
+        start = max(datetime.strptime(row['start_date'], '%Y-%m-%d').date(), year_start)
+        end = min(datetime.strptime(row['end_date'], '%Y-%m-%d').date(), year_end)
+        booked_dates.update(_daterange(start, end))
+
+    weeks = []
+    current = first_week
+    while current <= last_week:
+        week_end = current + timedelta(days=6)
+        impact = _calculate_week_impact(
+            current, week_end, holiday_map, booked_dates,
+            config.get('pto_holidays_require_pto', True), year
+        )
+        weeks.append({
+            'week_number': current.isocalendar().week,
+            'start_date': current.strftime('%Y-%m-%d'),
+            'end_date': week_end.strftime('%Y-%m-%d'),
+            **impact,
+        })
+        current += timedelta(days=7)
+    scores = [week['score'] for week in weeks]
+    return {
+        'year': year,
+        'weeks': weeks,
+        'max_score': max(scores, default=0.0),
+        'min_score': min(scores, default=0.0),
+    }
+
+
 def generate_calendar_events(year, config):
     events = []
-    us_holidays = get_us_holidays(year)
-    for holiday_date, name in sorted(us_holidays.items()):
+    holiday_map = get_holidays(year, config)
+    for holiday_date, name in sorted(holiday_map.items()):
         events.append({
             'date': holiday_date.strftime('%Y-%m-%d'),
             'type': 'holiday',
@@ -866,7 +1135,7 @@ def generate_vacation_suggestions(year, config):
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
 
-    today = datetime.now().date()
+    today = get_local_today(config)
     year_start = date(year, 1, 1)
     year_end = date(year, 12, 31)
     earliest = max(today, year_start)
@@ -897,7 +1166,7 @@ def generate_vacation_suggestions(year, config):
     budget_days = max(0, int(math.floor(target_days + 1e-9)))
 
     reserved_dates = _build_reserved_dates(year, vacations)
-    holidays_map = get_us_holidays(year)
+    holidays_map = get_holidays(year, config)
     holidays_set = set(holidays_map.keys())
 
     candidates = []
@@ -1189,7 +1458,17 @@ def index():
 
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
-    return jsonify(get_config())
+    config = get_config()
+    return jsonify({
+        **config,
+        'current_date': get_local_today(config).isoformat(),
+        'current_year': get_local_year(config),
+    })
+
+
+@app.route('/api/config/presets', methods=['GET'])
+def api_get_config_presets():
+    return jsonify(config_presets())
 
 
 @app.route('/api/config', methods=['PUT'])
@@ -1202,7 +1481,12 @@ def api_update_config():
     for key, value in data.items():
         if key not in VALID_CONFIG_KEYS:
             return jsonify({'error': f'Invalid config key: {key}'}), 400
-        if key in NUMERIC_CONFIG_KEYS:
+        if key == 'holiday_country':
+            country = validate_holiday_country(value)
+            if country is None:
+                return jsonify({'error': 'holiday_country must be a supported ISO country code'}), 400
+            validated[key] = country
+        elif key in NUMERIC_CONFIG_KEYS:
             if isinstance(value, bool):
                 return jsonify({'error': f'{key} must be numeric'}), 400
             try:
@@ -1219,6 +1503,13 @@ def api_update_config():
                 validated[key] = value.strip().lower()
             else:
                 return jsonify({'error': f'{key} must be boolean'}), 400
+        elif key == 'timezone':
+            if not isinstance(value, str) or not value.strip():
+                return jsonify({'error': 'timezone must be a valid IANA timezone'}), 400
+            try:
+                validated[key] = ZoneInfo(value.strip()).key
+            except (ZoneInfoNotFoundError, ValueError):
+                return jsonify({'error': 'timezone must be a valid IANA timezone'}), 400
         else:
             validated[key] = str(value)
 
@@ -1269,10 +1560,25 @@ def api_get_balance(date):
 
 @app.route('/api/balance', methods=['GET'])
 def api_get_balance_range():
-    year = request.args.get('year', str(datetime.now().year), type=int)
     config = get_config()
+    year = request.args.get('year', str(get_local_year(config)), type=int)
     forecast = generate_yearly_forecast(year, config)
     return jsonify({'year': year, 'forecast': forecast})
+
+
+@app.route('/api/forecast/multi-year', methods=['GET'])
+def api_get_multi_year_forecast():
+    start_year = request.args.get('start_year', datetime.now().year, type=int)
+    years = request.args.get('years', 2, type=int)
+    if start_year < 2000 or start_year > 2100:
+        return jsonify({'error': 'start_year must be between 2000 and 2100'}), 400
+    if years < 1 or years > 3:
+        return jsonify({'error': 'years must be between 1 and 3'}), 400
+    config = get_config()
+    return jsonify({
+        'start_year': start_year,
+        'years': generate_multi_year_forecast(start_year, years, config),
+    })
 
 
 @app.route('/api/forecast/<date>', methods=['GET'])
@@ -1380,10 +1686,10 @@ def api_analyze_vacation():
 
 @app.route('/api/vacations/suggestions', methods=['GET'])
 def api_get_vacation_suggestions():
-    year = request.args.get('year', datetime.now().year, type=int)
+    config = get_config()
+    year = request.args.get('year', get_local_year(config), type=int)
     if year < 2000 or year > 2100:
         return jsonify({'error': 'year must be between 2000 and 2100'}), 400
-    config = get_config()
     payload = generate_vacation_suggestions(year, config)
     unfiltered_count = len(payload['suggestions'])
     def query_number(name, converter):
@@ -1447,6 +1753,13 @@ def api_get_vacation_suggestions():
         'sort_by': sort_by
     }
     return jsonify(payload)
+
+
+@app.route('/api/heatmap/<int:year>', methods=['GET'])
+def api_get_heatmap(year):
+    if year < 2000 or year > 2100:
+        return jsonify({'error': 'year must be between 2000 and 2100'}), 400
+    return jsonify(generate_heatmap(year, get_config()))
 
 
 @app.route('/api/vacations/<int:vacation_id>', methods=['PUT'])
@@ -1525,8 +1838,8 @@ def api_get_calendar(year):
 def api_get_month_calendar(year, month):
     config = get_config()
     events = []
-    us_holidays = get_us_holidays(year)
-    for date, name in us_holidays.items():
+    holiday_map = get_holidays(year, config)
+    for date, name in holiday_map.items():
         if date.month == month:
             events.append({
                 'date': date.strftime('%Y-%m-%d'),
@@ -1569,10 +1882,10 @@ def api_get_month_calendar(year, month):
 @app.route('/api/stats', methods=['GET'])
 def api_get_stats():
     config = get_config()
-    today_date = datetime.now().date()
+    today_date = get_local_today(config)
     today = today_date.strftime('%Y-%m-%d')
     balance = calculate_balance_on_date(today, config)
-    forecast = generate_yearly_forecast(datetime.now().year, config)
+    forecast = generate_yearly_forecast(get_local_year(config), config)
     db = get_db()
     vacations = db.execute('SELECT * FROM vacations ORDER BY start_date').fetchall()
     year_end = date(today_date.year, 12, 31)
@@ -1686,8 +1999,8 @@ def api_delete_note(note_id):
 def _export_rows():
     db = get_db()
     config = get_config()
-    year = datetime.now().year
-    today = datetime.now().date().strftime('%Y-%m-%d')
+    year = get_local_year(config)
+    today = get_local_today(config).strftime('%Y-%m-%d')
     return config, calculate_balance_on_date(today, config), db.execute(
         'SELECT name, start_date, end_date, days, hours FROM vacations ORDER BY start_date'
     ).fetchall(), generate_yearly_forecast(year, config), year
