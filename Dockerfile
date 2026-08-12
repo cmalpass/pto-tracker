@@ -29,8 +29,7 @@ COPY --chown=appuser:appuser app.py .
 COPY --chown=appuser:appuser templates/ ./templates/
 COPY --chown=appuser:appuser static/ ./static/
 
-# Create instance directory for SQLite DB
-RUN mkdir -p /app/instance && chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app
 
 USER appuser
 
@@ -39,7 +38,7 @@ EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/config')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/')" || exit 1
 
 # Run with gunicorn for production
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]

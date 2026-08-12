@@ -18,12 +18,12 @@ Use this skill when you need to run or debug the PTO Tracker application in this
 
 Run on port 5001:
 
-`python -c "from app import app; app.run(debug=True, host='0.0.0.0', port=5001)"`
+`python -c "from app import app; app.run(debug=False, host='127.0.0.1', port=5001)"`
 
 ## Health Check
 
-- Default: `curl -s http://127.0.0.1:5000/api/config`
-- Alternate: `curl -s http://127.0.0.1:5001/api/config`
+- Default: `curl -s http://127.0.0.1:5000/`
+- Alternate: `curl -s http://127.0.0.1:5001/`
 
 ## Test Reminder
 

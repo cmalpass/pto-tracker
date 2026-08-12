@@ -275,8 +275,10 @@
                                 <option value="2026" selected>2026</option>
                                 <option value="2027">2027</option>
                             </select>
-                            <a class="btn btn-secondary" href="/api/export/excel">Export Excel</a>
-                            <a class="btn btn-secondary" href="/api/export/csv">Export CSV</a>
+                            <a class="btn btn-secondary" id="export-json" href="#">Export JSON</a>
+                            <a class="btn btn-secondary" id="import-json" href="#">Import JSON</a>
+                            <a class="btn btn-secondary" id="export-excel" href="#">Export Excel</a>
+                            <a class="btn btn-secondary" id="export-csv" href="#">Export CSV</a>
                         </div>
                     </div>
                     <div class="chart-container">
@@ -499,39 +501,8 @@
         <div class="toast" id="toast"></div>
     </div>
 
-    <script src="/static/js/app.js?v=20260418-4"></script>
-    <script>
-        (() => {
-            const form = document.getElementById('note-form');
-            const list = document.getElementById('notes-list');
-            const dateInput = document.getElementById('note-date');
-            fetch('/api/config').then(response => response.json()).then(config => {
-                dateInput.value = config.current_date;
-            });
-            async function loadNotes() {
-                const notes = await API.get('/api/notes');
-                list.innerHTML = notes.length ? notes.map(note =>
-                    `<div class="note-item"><strong>${note.date}</strong> ${note.text}
-                     <button class="btn btn-sm" data-note-id="${note.id}">Delete</button></div>`
-                ).join('') : '<p class="empty-hint">No notes yet</p>';
-                list.querySelectorAll('[data-note-id]').forEach(button => {
-                    button.addEventListener('click', async () => {
-                        await API.delete(`/api/notes/${button.dataset.noteId}`);
-                        loadNotes();
-                    });
-                });
-            }
-            form.addEventListener('submit', async event => {
-                event.preventDefault();
-                await API.post('/api/notes', {
-                    date: dateInput.value,
-                    text: document.getElementById('note-text').value
-                });
-                document.getElementById('note-text').value = '';
-                loadNotes();
-            });
-            loadNotes();
-        })();
-    </script>
+    <script src="/static/js/store.js?v=20260812-1"></script>
+    <script src="/static/js/pto.js?v=20260812-1"></script>
+    <script src="/static/js/app.js?v=20260812-1"></script>
 </body>
 </html>
