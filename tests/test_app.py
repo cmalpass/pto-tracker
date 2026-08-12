@@ -13,6 +13,17 @@ BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 TEST_YEAR = date.today().year
 
 
+async def csrf_headers(request_context):
+    """Return a CSRF header after establishing the browser token cookie."""
+    await request_context.get('/')
+    storage = await request_context.storage_state()
+    token = next(
+        cookie['value'] for cookie in storage['cookies']
+        if cookie['name'] == 'pto_csrf_token'
+    )
+    return {'X-CSRF-Token': token}
+
+
 async def test_dashboard_loads():
     """Verify dashboard renders with correct balance and stats."""
     async with async_playwright() as p:
@@ -192,18 +203,19 @@ async def test_delete_vacation():
 
 async def test_export_and_note_validation(request_context):
     """Verify exports neutralize formulas and malformed note dates return 400."""
-    malformed = await request_context.post('/api/notes', data={
+    headers = await csrf_headers(request_context)
+    malformed = await request_context.post('/api/notes', headers=headers, data={
         'date': 123,
         'text': 'Malformed date'
     })
     assert malformed.status == 400
-    non_canonical = await request_context.post('/api/notes', data={
+    non_canonical = await request_context.post('/api/notes', headers=headers, data={
         'date': '2026-1-1',
         'text': 'Non-canonical date'
     })
     assert non_canonical.status == 400
 
-    vacation = await request_context.post('/api/vacations', data={
+    vacation = await request_context.post('/api/vacations', headers=headers, data={
         'name': '=HYPERLINK("https://example.com","Injected")',
         'start_date': f'{TEST_YEAR}-11-02',
         'end_date': f'{TEST_YEAR}-11-02',
@@ -249,13 +261,14 @@ async def main():
 
 async def reset_database(request_context):
     """Remove test records and restore defaults before each browser test."""
+    headers = await csrf_headers(request_context)
     vacations_response = await request_context.get('/api/vacations')
     for vacation in await vacations_response.json():
-        await request_context.delete(f"/api/vacations/{vacation['id']}")
+        await request_context.delete(f"/api/vacations/{vacation['id']}", headers=headers)
     notes_response = await request_context.get('/api/notes')
     for note in await notes_response.json():
-        await request_context.delete(f"/api/notes/{note['id']}")
-    await request_context.put('/api/config', data={
+        await request_context.delete(f"/api/notes/{note['id']}", headers=headers)
+    await request_context.put('/api/config', headers=headers, data={
         'pto_accrual_per_pay_period': 1.0,
         'pto_accrual_type': 'days',
         'pto_hours_per_day': 8,

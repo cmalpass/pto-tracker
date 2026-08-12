@@ -5,12 +5,16 @@ import sqlite3
 import math
 import calendar
 import hmac
+import secrets
 import logging
 from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
 
 app = Flask(__name__)
+CSRF_COOKIE_NAME = 'pto_csrf_token'
+CSRF_HEADER_NAME = 'X-CSRF-Token'
+API_AUTH_SCHEME = 'Bearer'
 DATABASE = os.environ.get(
     'PTO_DB_PATH',
     os.path.join(os.path.dirname(__file__), 'instance', 'pto_tracker.db')
@@ -137,6 +141,21 @@ def get_config():
     return config
 
 
+def has_valid_basic_auth():
+    auth = request.authorization
+    expected_username = os.getenv('PTO_AUTH_USERNAME', '')
+    expected_password = os.getenv('PTO_AUTH_PASSWORD', '')
+    return bool(
+        auth
+        and expected_username
+        and expected_password
+        and auth.username
+        and auth.password
+        and hmac.compare_digest(auth.username, expected_username)
+        and hmac.compare_digest(auth.password, expected_password)
+    )
+
+
 @app.before_request
 def require_auth_for_writes():
     if request.method not in {'POST', 'PUT', 'DELETE'}:
@@ -144,22 +163,46 @@ def require_auth_for_writes():
     if os.getenv('PTO_REQUIRE_AUTH', 'false').strip().lower() not in {'1', 'true', 'yes', 'on'}:
         return None
 
-    auth = request.authorization
-    expected_username = os.getenv('PTO_AUTH_USERNAME', '')
-    expected_password = os.getenv('PTO_AUTH_PASSWORD', '')
-    if (
-        not auth
-        or not expected_username
-        or not expected_password
-        or not auth.username
-        or not auth.password
-        or not hmac.compare_digest(auth.username, expected_username)
-        or not hmac.compare_digest(auth.password, expected_password)
-    ):
+    if not has_valid_basic_auth():
         response = jsonify({'error': 'Authentication required'})
         response.status_code = 401
         response.headers['WWW-Authenticate'] = 'Basic realm="PTO Tracker"'
         return response
+    return None
+
+
+def has_valid_api_auth():
+    authorization = request.headers.get('Authorization', '')
+    scheme, _, credential = authorization.partition(' ')
+    expected_api_key = os.getenv('PTO_API_KEY', '')
+    if (
+        scheme.lower() != API_AUTH_SCHEME.lower()
+        or not credential
+        or not expected_api_key
+    ):
+        return False
+    return hmac.compare_digest(credential, expected_api_key)
+
+
+@app.before_request
+def require_csrf_for_browser_writes():
+    if request.method not in {'POST', 'PUT', 'DELETE', 'PATCH'}:
+        return None
+
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+    if cookie_token is None:
+        # Cookie-less writes must identify themselves as API clients explicitly.
+        if has_valid_api_auth() or (
+            os.getenv('PTO_REQUIRE_AUTH', 'false').strip().lower()
+            in {'1', 'true', 'yes', 'on'}
+            and has_valid_basic_auth()
+        ):
+            return None
+        return jsonify({'error': 'CSRF validation failed'}), 403
+
+    header_token = request.headers.get(CSRF_HEADER_NAME, '')
+    if not header_token or not hmac.compare_digest(header_token, cookie_token):
+        return jsonify({'error': 'CSRF validation failed'}), 403
     return None
 
 
@@ -765,7 +808,18 @@ def generate_vacation_suggestions(year, config):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    response = render_template('index.html')
+    response = app.make_response(response)
+    if request.cookies.get(CSRF_COOKIE_NAME) is None:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            secrets.token_urlsafe(32),
+            httponly=False,
+            secure=request.is_secure,
+            samesite='Strict',
+            path='/',
+        )
+    return response
 
 
 @app.route('/api/config', methods=['GET'])
