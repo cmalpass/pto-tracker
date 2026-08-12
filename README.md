@@ -41,6 +41,11 @@ python app.py
 
 Default URL: `http://127.0.0.1:5000`
 
+State-changing browser requests use a same-origin CSRF cookie and header token. For
+cookie-less API clients, set `PTO_API_KEY` and send `Authorization: Bearer <key>`.
+When `PTO_REQUIRE_AUTH=true`, valid configured Basic Auth credentials also identify
+cookie-less API requests.
+
 ### macOS Port 5000 Conflict (AirPlay Receiver / Control Center)
 
 On some macOS systems, port 5000 is already used by `ControlCenter`.
