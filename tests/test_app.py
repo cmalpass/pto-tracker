@@ -197,6 +197,11 @@ async def test_export_and_note_validation(request_context):
         'text': 'Malformed date'
     })
     assert malformed.status == 400
+    non_canonical = await request_context.post('/api/notes', data={
+        'date': '2026-1-1',
+        'text': 'Non-canonical date'
+    })
+    assert non_canonical.status == 400
 
     vacation = await request_context.post('/api/vacations', data={
         'name': '=HYPERLINK("https://example.com","Injected")',

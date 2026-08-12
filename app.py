@@ -863,8 +863,10 @@ def _validate_note_payload(data):
     if not isinstance(note_date, str) or not note_date or not text:
         return None, 'date and text are required'
     try:
-        datetime.strptime(note_date, '%Y-%m-%d')
+        parsed_date = datetime.strptime(note_date, '%Y-%m-%d')
     except (TypeError, ValueError):
+        return None, 'date must use yyyy-mm-dd format'
+    if parsed_date.strftime('%Y-%m-%d') != note_date:
         return None, 'date must use yyyy-mm-dd format'
     return {'date': note_date, 'text': text}, None
 
