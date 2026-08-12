@@ -4,7 +4,6 @@ import json
 import sqlite3
 import math
 import calendar
-import html
 from datetime import datetime, timedelta, date
 from flask import Flask, jsonify, request, render_template, g
 import holidays
@@ -334,8 +333,11 @@ def generate_calendar_events(year, config):
     return events
 
 
-def sanitize_vacation_name(value):
-    name = html.escape(str(value or 'Vacation').strip(), quote=True)[:100]
+def validate_vacation_name(value):
+    name = ''.join(
+        character for character in str(value or 'Vacation').strip()
+        if character.isprintable()
+    )[:100]
     return name or 'Vacation'
 
 
@@ -346,14 +348,40 @@ def _booking_amount(days, hours, config):
     return days + (hours / hours_per_day)
 
 
+def _existing_booking_amount_through(existing, target, config):
+    existing_start = datetime.strptime(existing['start_date'], '%Y-%m-%d').date()
+    existing_end = datetime.strptime(existing['end_date'], '%Y-%m-%d').date()
+    accrual_start = datetime.strptime(config['accrual_start_date'], '%Y-%m-%d').date()
+    year_start = accrual_start if target.year <= accrual_start.year else date(target.year, 1, 1)
+    overlap_start = max(existing_start, year_start)
+    overlap_end = min(existing_end, target)
+    if overlap_start > overlap_end:
+        return 0.0
+
+    total_business_days = get_vacation_days(
+        existing['start_date'], existing['end_date'], config
+    )
+    overlap_business_days = get_vacation_days(
+        overlap_start.strftime('%Y-%m-%d'),
+        overlap_end.strftime('%Y-%m-%d'),
+        config
+    )
+    if total_business_days > 0:
+        days = existing['days'] * (overlap_business_days / total_business_days)
+    elif existing_start >= year_start:
+        days = existing['days']
+    else:
+        days = 0.0
+    hours = existing['hours'] if existing_start >= year_start else 0.0
+    return _booking_amount(days, hours, config)
+
+
 def _validate_booking_balance(end_date, days, hours, config, existing=None):
     projected = calculate_balance_on_date(end_date, config)
     available = projected['accrued'] - projected['used']
     if existing:
-        existing_start = datetime.strptime(existing['start_date'], '%Y-%m-%d').date()
         target = datetime.strptime(end_date, '%Y-%m-%d').date()
-        if existing_start <= target:
-            available += _booking_amount(existing['days'], existing['hours'], config)
+        available += _existing_booking_amount_through(existing, target, config)
     requested = _booking_amount(days, hours, config)
     if available - requested < -1e-9:
         unit = 'hours' if config.get('pto_accrual_type') == 'hours' else 'days'
@@ -692,7 +720,7 @@ def api_get_vacations():
 def api_add_vacation():
     data = request.get_json() or {}
     db = get_db()
-    name = sanitize_vacation_name(data.get('name', 'Vacation'))
+    name = validate_vacation_name(data.get('name', 'Vacation'))
     start_date = data.get('start_date')
     end_date = data.get('end_date')
     if not start_date or not end_date:
@@ -765,7 +793,7 @@ def api_update_vacation(vacation_id):
     if not existing:
         return jsonify({'error': 'Vacation not found'}), 404
 
-    name = sanitize_vacation_name(data.get('name', existing['name']))
+    name = validate_vacation_name(data.get('name', existing['name']))
     start_date = data.get('start_date', existing['start_date'])
     end_date = data.get('end_date', existing['end_date'])
 
