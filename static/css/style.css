@@ -20,6 +20,17 @@
     --radius-full: 9999px;
 }
 
+[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f172a;
+    --card: #1e293b;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --border: #334155;
+    --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.2);
+}
+
 * {
     margin: 0;
     padding: 0;

@@ -2,7 +2,7 @@
 const API = {
     async get(path) {
         const res = await fetch(path);
-        return res.json();
+        return parseResponse(res);
     },
     async post(path, data) {
         const res = await fetch(path, {
@@ -10,7 +10,7 @@ const API = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return res.json();
+        return parseResponse(res);
     },
     async put(path, data) {
         const res = await fetch(path, {
@@ -18,13 +18,21 @@ const API = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return res.json();
+        return parseResponse(res);
     },
     async delete(path) {
         const res = await fetch(path, { method: 'DELETE' });
-        return res.json();
+        return parseResponse(res);
     }
 };
+
+async function parseResponse(res) {
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(data?.error || data?.message || res.statusText || `Request failed (${res.status})`);
+    }
+    return data;
+}
 
 const state = {
     config: {},
@@ -34,6 +42,7 @@ const state = {
     currentYear: new Date().getFullYear(),
     currentMonth: new Date().getMonth(),
     forecastChart: null,
+    forecastRequestId: 0,
     editingVacationId: null,
     vacationCalcRequestId: 0,
     vacationSuggestions: null
@@ -43,6 +52,7 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 document.addEventListener('DOMContentLoaded', () => {
+    setupThemeToggle();
     setupTabs();
     setupSettings();
     setupVacationModal();
@@ -62,6 +72,22 @@ function setupTabs() {
             else if (tab.dataset.tab === 'forecast') loadForecast();
             else if (tab.dataset.tab === 'vacations') loadVacations();
         });
+    });
+}
+
+function setupThemeToggle() {
+    const toggle = document.getElementById('btn-theme-toggle');
+    if (!toggle) return;
+    const savedTheme = localStorage.getItem('pto-theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+    document.documentElement.dataset.theme = theme;
+    toggle.setAttribute('aria-pressed', String(theme === 'dark'));
+    toggle.addEventListener('click', () => {
+        const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = nextTheme;
+        localStorage.setItem('pto-theme', nextTheme);
+        toggle.setAttribute('aria-pressed', String(nextTheme === 'dark'));
     });
 }
 
@@ -101,6 +127,7 @@ async function loadDashboard() {
         renderMiniCalendar();
     } catch (err) {
         console.error('Failed to load dashboard:', err);
+        showToast('Failed to load dashboard', 'error');
     }
 }
 
@@ -189,7 +216,8 @@ async function renderCalendar() {
             html += `<div class="${classes}" data-date="${dateStr}"><span class="day-number">${d}</span>`;
             dayEvents.slice(0, 2).forEach(e => {
                 const label = e.type === 'holiday' ? e.name.substring(0, 8) : (e.name || 'Vacation').substring(0, 10);
-                html += `<span class="day-event ${e.type}">${label}</span>`;
+                const eventClass = e.type === 'holiday' || e.type === 'vacation' ? e.type : 'vacation';
+                html += `<span class="day-event ${eventClass}">${escapeHtml(label)}</span>`;
             });
             html += '</div>';
         }
@@ -201,6 +229,7 @@ async function renderCalendar() {
         container.innerHTML = html;
     } catch (err) {
         console.error('Failed to load calendar:', err);
+        showToast('Failed to load calendar', 'error');
     }
 }
 
@@ -216,6 +245,7 @@ async function loadVacations() {
         renderVacationSuggestions();
     } catch (err) {
         console.error('Failed to load vacations:', err);
+        showToast('Failed to load vacations', 'error');
     }
 }
 
@@ -664,24 +694,26 @@ async function loadForecast() {
             await loadForecast();
         });
     }
+    const requestId = ++state.forecastRequestId;
     try {
         const data = await API.get(`/api/balance?year=${state.currentYear}`);
+        if (requestId !== state.forecastRequestId) return;
         state.forecast = data.forecast || [];
-        try {
-            renderForecastChart();
-        } catch (chartErr) {
-            console.error('Failed to render chart:', chartErr);
-        }
+        renderForecastChart();
         renderForecastTable();
     } catch (err) {
         console.error('Failed to load forecast:', err);
+        showToast('Failed to load forecast', 'error');
     }
 }
 
 function renderForecastChart() {
     const ctx = document.getElementById('forecast-chart');
     if (!ctx) return;
-    if (state.forecastChart) state.forecastChart.destroy();
+    if (state.forecastChart) {
+        state.forecastChart.destroy();
+        state.forecastChart = null;
+    }
     const labels = state.forecast.map(f => f.month_name.substring(0, 3));
     const accrued = state.forecast.map(f => f.accrued);
     const used = state.forecast.map(f => f.used);
