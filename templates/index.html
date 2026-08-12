@@ -311,6 +311,19 @@
                     </section>
                     <form id="settings-form" class="settings-form">
                         <div class="form-group">
+                            <label for="holiday-country">Holiday Country</label>
+                            <select id="holiday-country" name="holiday_country">
+                                <option value="US">United States</option>
+                                <option value="CA">Canada</option>
+                                <option value="GB">United Kingdom</option>
+                                <option value="AU">Australia</option>
+                                <option value="FR">France</option>
+                                <option value="DE">Germany</option>
+                                <option value="IN">India</option>
+                                <option value="JP">Japan</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
                             <label for="accrual-type">Accrual Type</label>
                             <select id="accrual-type" name="pto_accrual_type">
                                 <option value="days">Days</option>
@@ -344,6 +357,11 @@
                         <div class="form-group">
                             <label for="accrual-start">Accrual Start Date</label>
                             <input type="date" id="accrual-start" name="accrual_start_date">
+                        </div>
+                        <div class="form-group">
+                            <label for="timezone">Timezone (IANA)</label>
+                            <input type="text" id="timezone" name="timezone" placeholder="UTC" required>
+                            <small class="form-help">Used for “today” and year boundaries. UTC is the safe default.</small>
                         </div>
                         <div class="form-group">
                             <label for="vesting">Vesting Schedule</label>
@@ -436,7 +454,9 @@
             const form = document.getElementById('note-form');
             const list = document.getElementById('notes-list');
             const dateInput = document.getElementById('note-date');
-            dateInput.value = new Date().toISOString().slice(0, 10);
+            fetch('/api/config').then(response => response.json()).then(config => {
+                dateInput.value = config.current_date;
+            });
             async function loadNotes() {
                 const notes = await API.get('/api/notes');
                 list.innerHTML = notes.length ? notes.map(note =>
