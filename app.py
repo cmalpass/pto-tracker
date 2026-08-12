@@ -530,6 +530,114 @@ def _validate_booking_balance(end_date, days, hours, config, existing=None):
     return None
 
 
+def _forfeit_amount(balance_amount, config):
+    limit_days = config.get('pto_carryover_limit', 0) or 0
+    if config.get('pto_accrual_type') == 'hours':
+        limit_amount = limit_days * (config.get('pto_hours_per_day', 8.0) or 8.0)
+    else:
+        limit_amount = limit_days
+    if not config.get('pto_uses_rollover', True):
+        return max(0.0, balance_amount)
+    if config.get('pto_lose_above_limit', False):
+        return max(0.0, balance_amount - limit_amount)
+    return 0.0
+
+
+def _find_shift_savings(start_date, end_date, config):
+    start = datetime.strptime(start_date, '%Y-%m-%d').date()
+    end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    original_cost = get_vacation_days(start_date, end_date, config)
+    if original_cost <= 0:
+        return []
+    hints = []
+    for offset in (-2, -1, 1, 2):
+        shifted_start = start + timedelta(days=offset)
+        shifted_end = end + timedelta(days=offset)
+        shifted_cost = get_vacation_days(
+            shifted_start.strftime('%Y-%m-%d'),
+            shifted_end.strftime('%Y-%m-%d'),
+            config
+        )
+        savings = original_cost - shifted_cost
+        if savings > 0 and shifted_cost > 0:
+            hints.append({
+                'type': 'shift_suggestion',
+                'message': (
+                    f'Shift to {shifted_start.strftime("%b %-d")}-'
+                    f'{shifted_end.strftime("%b %-d")} to save {savings} PTO day'
+                    f'{"s" if savings != 1 else ""}.'
+                ),
+                'savings': savings,
+                'start_date': shifted_start.strftime('%Y-%m-%d'),
+                'end_date': shifted_end.strftime('%Y-%m-%d')
+            })
+    return hints[:2]
+
+
+def analyze_vacation(start_date, end_date, days, hours, config, vacation_id=None):
+    start = datetime.strptime(start_date, '%Y-%m-%d').date()
+    end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    if start > end:
+        raise ValueError('start_date cannot be after end_date')
+    db = get_db()
+    rows = db.execute(
+        'SELECT * FROM vacations WHERE start_date <= ? AND end_date >= ? ORDER BY start_date',
+        (end_date, start_date)
+    ).fetchall()
+    overlaps = [row for row in rows if vacation_id is None or row['id'] != vacation_id]
+    projected = calculate_balance_on_date(end_date, config)
+    current_amount = projected['accrued'] - projected['used']
+    if vacation_id:
+        existing = db.execute('SELECT * FROM vacations WHERE id = ?', (vacation_id,)).fetchone()
+        if existing:
+            current_amount += _existing_booking_amount_through(existing, end, config)
+    requested = _booking_amount(days, hours, config)
+    balance_after = current_amount - requested
+    year_end = date(end.year, 12, 31).strftime('%Y-%m-%d')
+    year_end_balance = calculate_balance_on_date(year_end, config)
+    baseline_forfeit = _forfeit_amount(
+        max(0.0, year_end_balance['accrued'] - year_end_balance['used']), config
+    )
+    proposed_forfeit = _forfeit_amount(
+        max(0.0, year_end_balance['accrued'] - year_end_balance['used'] - requested), config
+    )
+    warnings = []
+    unit = 'hours' if config.get('pto_accrual_type') == 'hours' else 'days'
+    if overlaps:
+        names = ', '.join(row['name'] for row in overlaps[:2])
+        warnings.append({
+            'type': 'overlap',
+            'message': f'This range overlaps {names}.',
+            'severity': 'warning'
+        })
+    if balance_after < -1e-9:
+        warnings.append({
+            'type': 'negative_balance',
+            'message': f'Balance will be {balance_after:.2f} {unit} after this vacation.',
+            'severity': 'error'
+        })
+    if proposed_forfeit > baseline_forfeit + 1e-9:
+        warnings.append({
+            'type': 'forfeit_increase',
+            'message': f'This increases year-end forfeiture risk by {proposed_forfeit - baseline_forfeit:.2f} {unit}.',
+            'severity': 'warning'
+        })
+    elif proposed_forfeit > 0:
+        warnings.append({
+            'type': 'policy_limit',
+            'message': f'{proposed_forfeit:.2f} {unit} may exceed your year-end policy limit.',
+            'severity': 'warning'
+        })
+    return {
+        'warnings': warnings,
+        'hints': _find_shift_savings(start_date, end_date, config),
+        'balance_after': round(balance_after, 2),
+        'pto_days_charged': round(days, 2),
+        'pto_hours_charged': round(hours, 2),
+        'unit': unit
+    }
+
+
 def _daterange(start, end):
     current = start
     while current <= end:
@@ -806,6 +914,58 @@ def generate_vacation_suggestions(year, config):
     }
 
 
+def _config_warnings(config):
+    warnings = []
+    if config.get('pto_accrual_per_pay_period', 0) <= 0:
+        warnings.append({
+            'type': 'invalid_accrual',
+            'message': 'Accrual per pay period must be greater than zero.',
+            'severity': 'error'
+        })
+    if config.get('pay_periods_per_year', 0) <= 0:
+        warnings.append({
+            'type': 'invalid_pay_periods',
+            'message': 'Pay periods per year must be greater than zero.',
+            'severity': 'error'
+        })
+    if config.get('pto_hours_per_day', 0) <= 0:
+        warnings.append({
+            'type': 'invalid_hours_per_day',
+            'message': 'Hours per day must be greater than zero.',
+            'severity': 'error'
+        })
+    if config.get('pto_lose_above_limit') and not config.get('pto_uses_rollover'):
+        warnings.append({
+            'type': 'policy_conflict',
+            'message': 'Cap at carryover limit has no effect while rollover is disabled.',
+            'severity': 'warning'
+        })
+    if config.get('pto_carryover_limit', 0) < 0:
+        warnings.append({
+            'type': 'invalid_limit',
+            'message': 'Carryover limit cannot be negative.',
+            'severity': 'error'
+        })
+    if config.get('pto_lose_above_limit') and config.get('pto_uses_rollover'):
+        year_end = f'{datetime.now().year}-12-31'
+        balance = calculate_balance_on_date(year_end, config)
+        balance_amount = max(0.0, balance['accrued'] - balance['used'])
+        limit_amount = config.get('pto_carryover_limit', 0)
+        if config.get('pto_accrual_type') == 'hours':
+            limit_amount *= config.get('pto_hours_per_day', 8.0) or 8.0
+        if balance_amount > limit_amount:
+            unit = 'hours' if config.get('pto_accrual_type') == 'hours' else 'days'
+            warnings.append({
+                'type': 'policy_limit',
+                'message': (
+                    f'Projected year-end balance exceeds the carryover limit; '
+                    f'{balance_amount - limit_amount:.2f} {unit} may be forfeited.'
+                ),
+                'severity': 'warning'
+            })
+    return warnings
+
+
 @app.route('/')
 def index():
     response = render_template('index.html')
@@ -857,12 +1017,42 @@ def api_update_config():
         else:
             validated[key] = str(value)
 
+    candidate = get_config()
+    for key, value in validated.items():
+        if key in NUMERIC_CONFIG_KEYS:
+            candidate[key] = float(value)
+        elif key in BOOLEAN_CONFIG_KEYS:
+            candidate[key] = value == 'true'
+        else:
+            candidate[key] = value
+    numeric_limits = {
+        'pto_accrual_per_pay_period': (0, None),
+        'pto_hours_per_day': (0.01, None),
+        'pay_periods_per_year': (1, None),
+        'pto_carryover_limit': (0, None),
+        'pto_cashout_rate': (0, 100),
+        'pto_grace_period_days': (0, None),
+    }
+    for key, (minimum, maximum) in numeric_limits.items():
+        value = candidate.get(key)
+        if value is not None and (value < minimum or (maximum is not None and value > maximum)):
+            return jsonify({'error': f'{key} must be between {minimum} and {maximum or "infinity"}'}), 400
+    try:
+        datetime.strptime(str(candidate.get('accrual_start_date')), '%Y-%m-%d')
+    except (TypeError, ValueError):
+        return jsonify({'error': 'accrual_start_date must use yyyy-mm-dd format'}), 400
+
     db = get_db()
     for key, value in validated.items():
         db.execute('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)',
                    (key, value))
     db.commit()
-    return jsonify({'status': 'ok', 'config': get_config()})
+    updated_config = get_config()
+    return jsonify({
+        'status': 'ok',
+        'config': updated_config,
+        'warnings': _config_warnings(updated_config)
+    })
 
 
 @app.route('/api/balance/<date>', methods=['GET'])
@@ -929,13 +1119,17 @@ def api_add_vacation():
     )
     if balance_error:
         return jsonify({'error': balance_error}), 400
+    analysis = analyze_vacation(start_date, end_date, days, hours, config)
     cursor = db.execute(
         'INSERT INTO vacations (name, start_date, end_date, days, hours) VALUES (?, ?, ?, ?, ?)',
         (name, start_date, end_date, days, hours)
     )
     db.commit()
     row = db.execute('SELECT * FROM vacations WHERE id = ?', (cursor.lastrowid,)).fetchone()
-    return jsonify(dict(row)), 201
+    response = dict(row)
+    response['warnings'] = analysis['warnings']
+    response['hints'] = analysis['hints']
+    return jsonify(response), 201
 
 
 @app.route('/api/vacations/calculate-days', methods=['GET'])
@@ -953,6 +1147,29 @@ def api_calculate_vacation_days():
     return jsonify({'start_date': start_date, 'end_date': end_date, 'days': days})
 
 
+@app.route('/api/vacations/analyze', methods=['POST'])
+def api_analyze_vacation():
+    data = request.get_json(silent=True) or {}
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+    if not start_date or not end_date:
+        return jsonify({'error': 'start_date and end_date are required'}), 400
+    try:
+        datetime.strptime(start_date, '%Y-%m-%d')
+        datetime.strptime(end_date, '%Y-%m-%d')
+        if start_date > end_date:
+            raise ValueError('start_date cannot be after end_date')
+        days = float(data.get('days', 0) or 0)
+        hours = normalize_quarter_hours(data.get('hours', 0))
+    except (TypeError, ValueError) as exc:
+        return jsonify({'error': str(exc) or 'Invalid vacation values'}), 400
+    if days < 0 or hours is None:
+        return jsonify({'error': 'days and hours must be non-negative'}), 400
+    return jsonify(analyze_vacation(
+        start_date, end_date, days, hours, get_config(), data.get('vacation_id')
+    ))
+
+
 @app.route('/api/vacations/suggestions', methods=['GET'])
 def api_get_vacation_suggestions():
     year = request.args.get('year', datetime.now().year, type=int)
@@ -960,6 +1177,67 @@ def api_get_vacation_suggestions():
         return jsonify({'error': 'year must be between 2000 and 2100'}), 400
     config = get_config()
     payload = generate_vacation_suggestions(year, config)
+    unfiltered_count = len(payload['suggestions'])
+    def query_number(name, converter):
+        raw = request.args.get(name)
+        if raw in (None, ''):
+            return None
+        try:
+            return converter(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f'{name} must be numeric')
+
+    try:
+        min_pto = query_number('min_pto_days', float)
+        max_pto = query_number('max_pto_days', float)
+        min_impact = query_number('min_impact', float)
+        month_start = query_number('month_start', int)
+        month_end = query_number('month_end', int)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if min_pto is not None and min_pto < 0 or max_pto is not None and max_pto < 0:
+        return jsonify({'error': 'PTO day filters cannot be negative'}), 400
+    if min_impact is not None and min_impact < 0:
+        return jsonify({'error': 'min_impact cannot be negative'}), 400
+    if month_start is not None and month_start not in range(1, 13):
+        return jsonify({'error': 'month_start must be between 1 and 12'}), 400
+    if month_end is not None and month_end not in range(1, 13):
+        return jsonify({'error': 'month_end must be between 1 and 12'}), 400
+    if month_start is not None and month_end is not None and month_start > month_end:
+        return jsonify({'error': 'month_start cannot be after month_end'}), 400
+    categories = [value for value in request.args.get('categories', '').split(',') if value]
+    available_categories = sorted({s['category'] for s in payload['suggestions']})
+    filtered = [
+        suggestion for suggestion in payload['suggestions']
+        if (min_pto is None or suggestion['pto_days'] >= min_pto)
+        and (max_pto is None or suggestion['pto_days'] <= max_pto)
+        and (min_impact is None or suggestion['impact_score'] >= min_impact)
+        and (month_start is None or int(suggestion['start_date'][5:7]) >= month_start)
+        and (month_end is None or int(suggestion['start_date'][5:7]) <= month_end)
+        and (not categories or suggestion['category'] in categories)
+    ]
+    sort_by = request.args.get('sort_by', 'impact')
+    if sort_by not in {'impact', 'date', 'pto_days'}:
+        return jsonify({'error': 'sort_by must be impact, date, or pto_days'}), 400
+    if sort_by == 'date':
+        filtered.sort(key=lambda suggestion: suggestion['start_date'])
+    elif sort_by == 'pto_days':
+        filtered.sort(key=lambda suggestion: suggestion['pto_days'], reverse=True)
+    else:
+        filtered.sort(key=lambda suggestion: (suggestion['impact_score'], suggestion['total_days_off']), reverse=True)
+    payload['suggestions'] = filtered
+    payload['total_unfiltered'] = unfiltered_count
+    payload['total_filtered'] = len(filtered)
+    payload['available_categories'] = available_categories
+    payload['filters_applied'] = {
+        'min_pto_days': min_pto,
+        'max_pto_days': max_pto,
+        'min_impact': min_impact,
+        'month_start': month_start,
+        'month_end': month_end,
+        'categories': categories,
+        'sort_by': sort_by
+    }
     return jsonify(payload)
 
 
@@ -1004,6 +1282,7 @@ def api_update_vacation(vacation_id):
     )
     if balance_error:
         return jsonify({'error': balance_error}), 400
+    analysis = analyze_vacation(start_date, end_date, days, hours, config, vacation_id)
 
     db.execute(
         'UPDATE vacations SET name = ?, start_date = ?, end_date = ?, days = ?, hours = ? WHERE id = ?',
@@ -1011,7 +1290,10 @@ def api_update_vacation(vacation_id):
     )
     db.commit()
     row = db.execute('SELECT * FROM vacations WHERE id = ?', (vacation_id,)).fetchone()
-    return jsonify(dict(row))
+    response = dict(row)
+    response['warnings'] = analysis['warnings']
+    response['hints'] = analysis['hints']
+    return jsonify(response)
 
 
 @app.route('/api/vacations/<int:vacation_id>', methods=['DELETE'])

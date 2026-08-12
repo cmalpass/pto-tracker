@@ -2,6 +2,7 @@
 import asyncio
 import sys
 import os
+import json
 from io import BytesIO
 from datetime import date, timedelta
 from openpyxl import load_workbook
@@ -234,13 +235,71 @@ async def test_export_and_note_validation(request_context):
     assert workbook['Vacation Schedule']['A2'].value.startswith("'=")
 
 
+async def test_smart_warnings_and_suggestion_filters(request_context=None):
+    """Verify vacation analysis warnings and server-side suggestion filters."""
+    own_context = request_context is None
+    if own_context:
+        async with async_playwright() as p:
+            request_context = await p.request.new_context(base_url=BASE_URL)
+            try:
+                await test_smart_warnings_and_suggestion_filters(request_context)
+            finally:
+                await request_context.dispose()
+        return
+    headers = await csrf_headers(request_context)
+    first = await request_context.post('/api/vacations', headers=headers, data={
+        'name': 'Existing trip',
+        'start_date': f'{TEST_YEAR}-09-14',
+        'end_date': f'{TEST_YEAR}-09-16',
+        'days': 3,
+        'auto_days': False,
+        'hours': 0,
+    })
+    assert first.status == 201
+    analysis = await request_context.post('/api/vacations/analyze',
+        data=json.dumps({
+            'start_date': f'{TEST_YEAR}-09-15',
+            'end_date': f'{TEST_YEAR}-09-17',
+            'days': 3,
+            'hours': 0,
+        }),
+        headers={**headers, 'Content-Type': 'application/json'})
+    assert analysis.status == 200
+    analysis_data = await analysis.json()
+    assert any(warning['type'] == 'overlap' for warning in analysis_data['warnings'])
+
+    filtered = await request_context.get(
+        f'/api/vacations/suggestions?year={TEST_YEAR}&max_pto_days=1&sort_by=date'
+    )
+    assert filtered.status == 200
+    filtered_data = await filtered.json()
+    assert filtered_data['total_filtered'] <= filtered_data['total_unfiltered']
+    assert all(item['pto_days'] <= 1 for item in filtered_data['suggestions'])
+    assert filtered_data['filters_applied']['sort_by'] == 'date'
+
+
+async def test_vacation_warning_controls_render():
+    """Verify the vacation UI exposes accessible analysis and filter controls."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        await page.click("button:has-text('Vacations')")
+        await page.wait_for_timeout(500)
+        assert await page.locator("#btn-toggle-suggestion-filters").is_visible()
+        assert await page.locator("#vacation-warnings").count() == 1
+        await page.locator("#btn-toggle-suggestion-filters").click()
+        assert await page.locator("#suggestion-filter-controls").is_visible()
+        await browser.close()
+
+
 async def test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days(request_context):
     """Verify stats keep the entry count while exposing scheduled PTO days."""
     start_date = date.today() + timedelta(days=7)
     while start_date.weekday() != 0:
         start_date += timedelta(days=1)
     end_date = start_date + timedelta(days=4)
-    vacation = await request_context.post('/api/vacations', data={
+    vacation = await request_context.post('/api/vacations', headers=await csrf_headers(request_context), data={
         'name': 'Stats Regression',
         'start_date': start_date.isoformat(),
         'end_date': end_date.isoformat(),
@@ -267,6 +326,8 @@ async def main():
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_smart_warnings_and_suggestion_filters,
+        test_vacation_warning_controls_render,
     ]
     passed = 0
     failed = 0
@@ -316,6 +377,8 @@ async def run_isolated_tests():
         test_chart_rendering,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_smart_warnings_and_suggestion_filters,
+        test_vacation_warning_controls_render,
         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
     ]
     passed = 0
@@ -328,6 +391,7 @@ async def run_isolated_tests():
                 try:
                     if test in {
                         test_export_and_note_validation,
+                        test_smart_warnings_and_suggestion_filters,
                         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
                     }:
                         await test(request_context)
