@@ -88,6 +88,45 @@ async def test_settings_stay_local(browser):
         await context.close()
 
 
+async def test_accessibility_semantics_and_keyboard_controls(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        tabs = page.locator("[role='tab']")
+        assert await tabs.count() == 5
+        await tabs.nth(0).focus()
+        await page.keyboard.press("ArrowRight")
+        assert await page.locator("#tab-calendar-tab").get_attribute("aria-selected") == "true"
+        assert await page.locator("#tab-calendar").is_visible()
+        await page.wait_for_selector(".cal-day[data-date]")
+        assert await page.locator(".cal-day[data-date]").first.get_attribute("aria-label")
+        await page.locator("#cal-prev-month").focus()
+        await page.click("#btn-settings")
+        settings = page.locator("#settings-modal")
+        assert await settings.get_attribute("role") == "dialog"
+        assert await settings.get_attribute("aria-modal") == "true"
+        assert await page.locator("#policy-preset").evaluate("(node) => node === document.activeElement")
+        await page.keyboard.press("Escape")
+        assert not await settings.is_visible()
+        assert await page.locator("#btn-settings").evaluate("(node) => node === document.activeElement")
+        await page.click("#tab-vacations-tab")
+        await page.click("#btn-add-vacation")
+        vacation_dialog = page.locator("#vacation-modal")
+        assert await vacation_dialog.get_attribute("role") == "dialog"
+        await page.locator("#btn-submit-vacation").focus()
+        await page.keyboard.press("Tab")
+        assert await page.locator("#btn-close-vacation").evaluate("(node) => node === document.activeElement")
+        await page.keyboard.press("Escape")
+        assert not await vacation_dialog.is_visible()
+        assert await page.locator("#btn-add-vacation").evaluate("(node) => node === document.activeElement")
+        await page.click("#tab-heatmap-tab")
+        await page.wait_for_selector(".heatmap-cell")
+        assert "Color intensity" in await page.locator("#heatmap-legend").text_content()
+        assert await page.locator(".heatmap-cell").first.get_attribute("aria-label")
+    finally:
+        await context.close()
+
+
 async def test_module_loading_and_browser_value_escaping(browser):
     context, page = await new_page(browser)
     try:
@@ -138,6 +177,7 @@ async def main():
             test_vacation_persists_and_deletes,
             test_notes_and_json_backup,
             test_settings_stay_local,
+            test_accessibility_semantics_and_keyboard_controls,
             test_module_loading_and_browser_value_escaping,
         ]
         failures = []

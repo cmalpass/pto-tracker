@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260812-2';
-import { clearElement, element, appendText } from './dom.js?v=20260812-2';
+import { DAYS, MONTHS, state } from './state.js?v=20260812-3';
+import { clearElement, element, appendText } from './dom.js?v=20260812-3';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -12,6 +12,7 @@ function addSvgIcon(parent, kind, size = 20) {
     svg.setAttribute('fill', 'none');
     svg.setAttribute('stroke', 'currentColor');
     svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('aria-hidden', 'true');
     const paths = kind === 'edit'
         ? [['path', { d: 'M12 20h9' }], ['path', {
             d: 'M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z'
@@ -117,13 +118,19 @@ export function renderCalendar(year, month, today, monthEvents) {
     title.textContent = `${MONTHS[month]} ${year}`;
     clearElement(container);
     const header = element('div', 'cal-header');
-    DAYS.forEach(day => appendText(header, 'span', '', day));
+    header.setAttribute('role', 'row');
+    DAYS.forEach(day => {
+        const heading = appendText(header, 'span', '', day);
+        heading.setAttribute('role', 'columnheader');
+    });
     container.append(header);
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const previousDays = new Date(year, month, 0).getDate();
     for (let i = firstDay - 1; i >= 0; i--) {
         const cell = element('div', 'cal-day other-month');
+        cell.setAttribute('role', 'gridcell');
+        cell.setAttribute('aria-hidden', 'true');
         appendText(cell, 'span', 'day-number', previousDays - i);
         container.append(cell);
     }
@@ -137,8 +144,20 @@ export function renderCalendar(year, month, today, monthEvents) {
             dayEvents.some(event => event.type === 'holiday') ? 'holiday' : '',
             dayEvents.some(event => event.type === 'vacation') ? 'vacation' : ''
         ].filter(Boolean).join(' ');
-        const cell = element('div', classes);
+        const cell = element('button', classes);
+        cell.type = 'button';
         cell.dataset.date = date;
+        const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString('en-US', {
+            weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+        });
+        const eventLabels = dayEvents.map(event =>
+            `${event.type === 'holiday' ? 'Holiday' : 'Vacation'}: ${event.name || 'Vacation'}`);
+        const stateLabels = [
+            classes.includes('today') ? 'Today' : '',
+            ...eventLabels
+        ].filter(Boolean);
+        cell.setAttribute('aria-label', [dateLabel, ...stateLabels].join('. '));
+        cell.title = cell.getAttribute('aria-label');
         appendText(cell, 'span', 'day-number', day);
         dayEvents.slice(0, 2).forEach(event => {
             const label = event.type === 'holiday'
@@ -152,6 +171,8 @@ export function renderCalendar(year, month, today, monthEvents) {
     const remaining = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
     for (let day = 1; day <= remaining; day++) {
         const cell = element('div', 'cal-day other-month');
+        cell.setAttribute('role', 'gridcell');
+        cell.setAttribute('aria-hidden', 'true');
         appendText(cell, 'span', 'day-number', day);
         container.append(cell);
     }
@@ -192,10 +213,12 @@ export function renderVacationsList(vacations) {
         const edit = element('button', 'vacation-edit');
         edit.dataset.vacationId = vacation.id;
         edit.title = 'Edit';
+        edit.setAttribute('aria-label', `Edit vacation ${vacation.name}`);
         addSvgIcon(edit, 'edit', 16);
         const remove = element('button', 'vacation-delete');
         remove.dataset.vacationId = vacation.id;
         remove.title = 'Delete';
+        remove.setAttribute('aria-label', `Delete vacation ${vacation.name}`);
         addSvgIcon(remove, 'delete', 16);
         actions.append(edit, remove);
         item.append(icon, info, usageElement, actions);
@@ -442,7 +465,12 @@ export function renderHeatmap(data) {
         cell.title = `Week ${week.week_number}: ${week.start_date} to ${week.end_date}\nScore: ${
             week.score.toFixed(2)}\n${week.holidays.length ? week.holidays.join(', ') : 'No holidays'}`;
         cell.dataset.date = week.start_date;
-        cell.setAttribute('aria-label', `Week ${week.week_number}, score ${week.score.toFixed(2)}`);
+        cell.setAttribute('aria-label', [
+            `Week ${week.week_number}, ${week.start_date} to ${week.end_date}`,
+            `score ${week.score.toFixed(2)}`,
+            week.already_booked ? 'already booked' : 'available',
+            week.holidays.length ? `holidays: ${week.holidays.join(', ')}` : 'no holidays'
+        ].join('. '));
         cell.textContent = week.week_number;
         grid.append(cell);
     });
@@ -451,7 +479,8 @@ export function renderHeatmap(data) {
     appendText(legend, 'span', '', 'Lower value');
     legend.append(element('span', 'heatmap-gradient'));
     appendText(legend, 'span', '', 'Higher value');
-    appendText(legend, 'span', 'heatmap-legend-note', 'Score = days off per PTO day');
+    appendText(legend, 'span', 'heatmap-legend-note',
+        'Color intensity shows days off per PTO day; stripes indicate an already booked week.');
 }
 
 export function renderForecastTable(forecast) {

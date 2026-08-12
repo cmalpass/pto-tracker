@@ -5,13 +5,17 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260812-2';
+} from './modules/state.js?v=20260812-3';
 import {
+    announce,
+    closeDialog,
     escapeHtml,
+    openDialog,
     reportError,
+    setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260812-2';
+} from './modules/dom.js?v=20260812-3';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -23,19 +27,19 @@ import {
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom
-} from './modules/rendering.js?v=20260812-2';
+} from './modules/rendering.js?v=20260812-3';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260812-2';
-import { generateSuggestions } from './modules/suggestions.js?v=20260812-2';
-import { configWarnings } from './modules/settings.js?v=20260812-2';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-2';
+} from './modules/calendar.js?v=20260812-3';
+import { generateSuggestions } from './modules/suggestions.js?v=20260812-3';
+import { configWarnings } from './modules/settings.js?v=20260812-3';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-3';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260812-2';
+} from './modules/forecast.js?v=20260812-3';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -98,16 +102,36 @@ export function startApplication() {
 }
 
 function setupTabs() {
-    document.querySelectorAll('.nav-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            tab.classList.add('active');
-            document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
-            if (tab.dataset.tab === 'calendar') renderCalendar();
-            else if (tab.dataset.tab === 'heatmap') loadHeatmap();
-            else if (tab.dataset.tab === 'forecast') loadForecast();
-            else if (tab.dataset.tab === 'vacations') loadVacations();
+    const tabs = [...document.querySelectorAll('.nav-tab')];
+    const activateTab = tab => {
+        tabs.forEach(candidate => {
+            const selected = candidate === tab;
+            candidate.classList.toggle('active', selected);
+            candidate.setAttribute('aria-selected', String(selected));
+            candidate.tabIndex = selected ? 0 : -1;
+        });
+        document.querySelectorAll('.tab-content').forEach(panel => {
+            const selected = panel.id === `tab-${tab.dataset.tab}`;
+            panel.classList.toggle('active', selected);
+            panel.hidden = !selected;
+        });
+        if (tab.dataset.tab === 'calendar') renderCalendar();
+        else if (tab.dataset.tab === 'heatmap') loadHeatmap();
+        else if (tab.dataset.tab === 'forecast') loadForecast();
+        else if (tab.dataset.tab === 'vacations') loadVacations();
+    };
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => activateTab(tab));
+        tab.addEventListener('keydown', event => {
+            if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const index = tabs.indexOf(tab);
+            const nextIndex = event.key === 'Home' ? 0
+                : event.key === 'End' ? tabs.length - 1
+                    : (index + (event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1) + tabs.length) % tabs.length;
+            const nextTab = tabs[nextIndex];
+            nextTab.focus();
+            activateTab(nextTab);
         });
     });
 }
@@ -129,6 +153,7 @@ function setupThemeToggle() {
 }
 
 async function loadDashboard() {
+    announce('Loading current PTO balance.');
     try {
         const [config, vacations] = await Promise.all([
             getRuntimeConfig(),
@@ -178,6 +203,7 @@ async function loadDashboard() {
         const payPeriodDays = 365.25 / config.pay_periods_per_year;
         const nextAccrual = new Date(now.getTime() + payPeriodDays * 86400000);
         document.getElementById('next-accrual-date').textContent = nextAccrual.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        announce(`Current PTO balance loaded: ${balance.balance.toFixed(1)} ${unitLabel}.`);
         state.calendarEvents[`${now.getFullYear()}-${now.getMonth()}`] =
             expandCalendarEvents(calendarData(now.getFullYear(), now.getMonth()).events, now.getFullYear(), now.getMonth());
         renderMiniCalendar();
@@ -232,6 +258,7 @@ function setupCalendar() {
 }
 
 async function renderCalendar() {
+    announce(`Loading ${MONTHS[state.currentMonth]} ${state.currentYear} calendar.`);
     const title = `${MONTHS[state.currentMonth]} ${state.currentYear}`;
     document.getElementById('calendar-title').textContent = title;
     try {
@@ -252,6 +279,7 @@ async function renderCalendar() {
 }
 
 async function loadVacations() {
+    announce('Loading planned vacations.');
     try {
         const vacations = await PTOStore.listVacations();
         state.vacations = vacations;
@@ -367,13 +395,13 @@ function openCreateVacationModal(prefillDate = null) {
     document.getElementById('vacation-modal-title').textContent = 'Add Vacation';
     document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
     document.getElementById('vacation-auto-days').checked = true;
-    document.getElementById('vacation-modal').classList.add('active');
     const selectedDate = prefillDate || getTodayIsoDate();
     document.getElementById('vacation-start').value = selectedDate;
     document.getElementById('vacation-end').value = selectedDate;
     syncVacationDateBounds();
     document.getElementById('vacation-hours').value = 0;
     calcVacationDays();
+    openDialog(document.getElementById('vacation-modal'), '#vacation-name');
 }
 
 function editVacation(id) {
@@ -389,7 +417,7 @@ function editVacation(id) {
     document.getElementById('vacation-hours').value = vacation.hours || 0;
     document.getElementById('vacation-auto-days').checked = (vacation.days || 0) > 0;
     calcVacationDays();
-    document.getElementById('vacation-modal').classList.add('active');
+    openDialog(document.getElementById('vacation-modal'), '#vacation-name');
 }
 
 function setupVacationList() {
@@ -417,9 +445,7 @@ function setupVacationModal() {
     document.getElementById('btn-add-vacation').addEventListener('click', () => openCreateVacationModal());
     document.getElementById('btn-close-vacation').addEventListener('click', closeVacationModal);
     document.getElementById('btn-cancel-vacation').addEventListener('click', closeVacationModal);
-    document.getElementById('vacation-modal').addEventListener('click', (e) => {
-        if (e.target === document.getElementById('vacation-modal')) closeVacationModal();
-    });
+    setupDialog(document.getElementById('vacation-modal'), closeVacationModal);
     document.getElementById('vacation-start').addEventListener('change', () => {
         syncVacationDateBounds();
         calcVacationDays();
@@ -615,7 +641,7 @@ async function calcVacationDays() {
 }
 
 function closeVacationModal() {
-    document.getElementById('vacation-modal').classList.remove('active');
+    closeDialog(document.getElementById('vacation-modal'));
     document.getElementById('vacation-form').reset();
     document.getElementById('vacation-preview').classList.remove('active');
     state.editingVacationId = null;
@@ -723,6 +749,7 @@ async function setupNotes() {
             });
             document.getElementById('note-text').value = '';
             await renderStoredNotes();
+            showToast('Note saved', 'success');
         } catch (error) {
             showToast(error.message || 'Failed to save note', 'error');
         }
@@ -739,8 +766,13 @@ async function renderStoredNotes() {
     if (!list) return;
     list.querySelectorAll('[data-local-note-id]').forEach(button => {
         button.addEventListener('click', async () => {
-            await PTOStore.deleteNote(Number(button.dataset.localNoteId));
-            await renderStoredNotes();
+            try {
+                await PTOStore.deleteNote(Number(button.dataset.localNoteId));
+                showToast('Note deleted', 'success');
+                await renderStoredNotes();
+            } catch (error) {
+                showToast(error.message || 'Failed to delete note', 'error');
+            }
         });
     });
 }
@@ -749,9 +781,7 @@ function setupSettings() {
     document.getElementById('btn-settings').addEventListener('click', openSettings);
     document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
     document.getElementById('btn-cancel-settings').addEventListener('click', closeSettings);
-    document.getElementById('settings-modal').addEventListener('click', (e) => {
-        if (e.target === document.getElementById('settings-modal')) closeSettings();
-    });
+    setupDialog(document.getElementById('settings-modal'), closeSettings);
     document.getElementById('btn-preview-policy').addEventListener('click', previewPolicy);
     document.getElementById('btn-apply-policy').addEventListener('click', applyPolicy);
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
@@ -803,14 +833,14 @@ async function openSettings() {
         document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
         document.getElementById('lose-limit').checked = config.pto_lose_above_limit !== false;
         document.getElementById('holidays-require-pto').checked = config.pto_holidays_require_pto !== false;
-        document.getElementById('settings-modal').classList.add('active');
+        openDialog(document.getElementById('settings-modal'), '#policy-preset');
     } catch (err) {
         showToast('Failed to load settings', 'error');
     }
 }
 
 function closeSettings() {
-    document.getElementById('settings-modal').classList.remove('active');
+    closeDialog(document.getElementById('settings-modal'));
 }
 
 async function loadPolicyPresets() {
@@ -884,6 +914,7 @@ async function applyPolicy() {
 }
 
 async function loadForecast() {
+    announce(`Loading ${state.currentYear} forecast.`);
     const yearSelect = document.getElementById('forecast-year');
     if (yearSelect && !yearSelect.dataset.listenerAttached) {
         yearSelect.dataset.listenerAttached = 'true';
@@ -924,6 +955,7 @@ async function loadMultiYearForecast() {
     }
     const requestId = ++state.multiYearRequestId;
     const stateEl = document.getElementById('multi-year-state');
+    announce('Loading multi-year forecast.');
     try {
         const data = {
             years: multiYearForecastFor(
@@ -935,6 +967,7 @@ async function loadMultiYearForecast() {
     } catch (err) {
         console.error('Failed to load multi-year forecast:', err);
         stateEl.textContent = 'Multi-year forecast is unavailable right now.';
+        announce('Multi-year forecast is unavailable right now.');
         stateEl.hidden = false;
         document.getElementById('multi-year-summary').hidden = true;
         document.getElementById('multi-year-chart-container').hidden = true;
@@ -986,6 +1019,7 @@ async function loadHeatmap() {
     const stateEl = document.getElementById('heatmap-state');
     const grid = document.getElementById('heatmap-grid');
     const legend = document.getElementById('heatmap-legend');
+    announce(`Loading ${select.value} best weeks heatmap.`);
     try {
         const data = heatmapFor(Number(select.value), state.config, state.vacations);
         if (requestId !== state.heatmapRequestId) return;
@@ -1011,6 +1045,7 @@ async function loadHeatmap() {
     } catch (err) {
         console.error('Failed to load heatmap:', err);
         stateEl.textContent = 'Heatmap is unavailable right now.';
+        announce('Heatmap is unavailable right now.');
         stateEl.hidden = false;
         grid.hidden = true;
         legend.hidden = true;
