@@ -118,6 +118,10 @@
                                 <div class="stat-label">Upcoming Trips</div>
                             </div>
                             <div class="stat-item">
+                                <div class="stat-value" id="stat-scheduled-pto">0.0</div>
+                                <div class="stat-label">Scheduled PTO Remaining</div>
+                            </div>
+                            <div class="stat-item">
                                 <div class="stat-value" id="stat-remaining-days">0</div>
                                 <div class="stat-label">Days Left in Year</div>
                             </div>
@@ -396,25 +400,23 @@
             const dateInput = document.getElementById('note-date');
             dateInput.value = new Date().toISOString().slice(0, 10);
             async function loadNotes() {
-                const response = await fetch('/api/notes');
-                const notes = await response.json();
+                const notes = await API.get('/api/notes');
                 list.innerHTML = notes.length ? notes.map(note =>
                     `<div class="note-item"><strong>${note.date}</strong> ${note.text}
                      <button class="btn btn-sm" data-note-id="${note.id}">Delete</button></div>`
                 ).join('') : '<p class="empty-hint">No notes yet</p>';
                 list.querySelectorAll('[data-note-id]').forEach(button => {
                     button.addEventListener('click', async () => {
-                        await fetch(`/api/notes/${button.dataset.noteId}`, { method: 'DELETE' });
+                        await API.delete(`/api/notes/${button.dataset.noteId}`);
                         loadNotes();
                     });
                 });
             }
             form.addEventListener('submit', async event => {
                 event.preventDefault();
-                await fetch('/api/notes', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({date: dateInput.value, text: document.getElementById('note-text').value})
+                await API.post('/api/notes', {
+                    date: dateInput.value,
+                    text: document.getElementById('note-text').value
                 });
                 document.getElementById('note-text').value = '';
                 loadNotes();

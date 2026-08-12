@@ -15,6 +15,10 @@ class VacationOverlapTests(unittest.TestCase):
         app_module.DATABASE = os.path.join(self.temp_dir.name, 'pto.db')
         app_module.init_db()
         self.client = app_module.app.test_client()
+        response = self.client.get('/')
+        cookie = response.headers['Set-Cookie'].split(';', 1)[0]
+        token = cookie.split('=', 1)[1]
+        self.csrf_headers = {'Cookie': cookie, 'X-CSRF-Token': token}
         self.config = app_module.default_config()
         self.config['pto_holidays_require_pto'] = True
 
@@ -27,7 +31,7 @@ class VacationOverlapTests(unittest.TestCase):
             'start_date': start_date,
             'end_date': end_date,
             'auto_days': True,
-        })
+        }, headers=self.csrf_headers)
 
     def test_partial_nested_and_cross_year_writes_are_rejected(self):
         self.assertEqual(self.add('Partial base', '2026-08-03', '2026-08-07').status_code, 201)
@@ -43,7 +47,16 @@ class VacationOverlapTests(unittest.TestCase):
             self.assertIn('overlap', payload['error'])
 
     def test_unpadded_dates_are_rejected_before_overlap_check(self):
-        response = self.add('Unpadded', '2026-8-03', '2026-8-07')
+        response = self.client.post(
+            '/api/vacations',
+            json={
+                'name': 'Unpadded',
+                'start_date': '2026-8-03',
+                'end_date': '2026-8-07',
+                'auto_days': True,
+            },
+            headers=self.csrf_headers,
+        )
         self.assertEqual(response.status_code, 400)
         self.assertIn('yyyy-mm-dd', response.get_json()['error'])
 
@@ -53,6 +66,7 @@ class VacationOverlapTests(unittest.TestCase):
         response = self.client.put(
             f"/api/vacations/{second['id']}",
             json={'start_date': '2026-09-03', 'end_date': '2026-09-08'},
+            headers=self.csrf_headers,
         )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.get_json()['conflicts'][0]['id'], first['id'])
@@ -60,6 +74,7 @@ class VacationOverlapTests(unittest.TestCase):
         response = self.client.put(
             f"/api/vacations/{second['id']}",
             json={'start_date': '2026-09-07', 'end_date': '2026-09-09'},
+            headers=self.csrf_headers,
         )
         self.assertEqual(response.status_code, 200)
 
