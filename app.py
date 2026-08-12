@@ -984,8 +984,18 @@ def _valid_pto_day(day, holidays_set, reserved_dates, earliest_date, year, holid
 
 
 def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=None):
-    if not pto_dates:
+    interval = _continuous_days_off_interval(
+        pto_dates, holidays_set, min_date=min_date, max_date=max_date
+    )
+    if not interval:
         return 0
+    start, end = interval
+    return (end - start).days + 1
+
+
+def _continuous_days_off_interval(pto_dates, holidays_set, min_date=None, max_date=None):
+    if not pto_dates:
+        return None
 
     def is_day_off(check_day):
         return (check_day.weekday() >= 5) or (check_day in holidays_set) or (check_day in pto_dates)
@@ -1005,35 +1015,119 @@ def _continuous_days_off_count(pto_dates, holidays_set, min_date=None, max_date=
         end = cursor
         cursor += timedelta(days=1)
 
-    return (end - start).days + 1
+    return start, end
 
 
-def _make_suggestion(start_day, end_day, title, reason, category, holidays_set, holidays_require_pto, holiday_date=None):
+def _suggestion_day_metrics(start_day, end_day, holidays_set, holidays_require_pto):
     all_dates = list(_daterange(start_day, end_day))
     pto_dates = [
         day.strftime('%Y-%m-%d')
         for day in all_dates
         if day.weekday() < 5 and (holidays_require_pto or day not in holidays_set)
     ]
-    pto_days = len(pto_dates)
-    days_off = _continuous_days_off_count(
+    off_interval = _continuous_days_off_interval(
         set(all_dates),
         holidays_set,
         min_date=date(start_day.year, 1, 1),
         max_date=date(start_day.year, 12, 31)
     )
+    expanded_dates = list(_daterange(*off_interval)) if off_interval else all_dates
+    holiday_dates = [day for day in expanded_dates if day in holidays_set]
+    weekend_days = [
+        day for day in expanded_dates
+        if day.weekday() >= 5 and day not in holidays_set
+    ]
+    pto_date_set = set(pto_dates)
+    non_pto_weekday_days = [
+        day for day in expanded_dates
+        if day.weekday() < 5
+        and day.strftime('%Y-%m-%d') not in pto_date_set
+        and day not in holidays_set
+    ]
+    weekday_pto_days = [
+        day for day in expanded_dates
+        if day.strftime('%Y-%m-%d') in pto_date_set
+        and day not in holidays_set
+    ]
+    return {
+        'all_dates': expanded_dates,
+        'pto_dates': pto_dates,
+        'pto_days': len(pto_dates),
+        'holiday_dates': holiday_dates,
+        'weekend_days': weekend_days,
+        'non_pto_weekday_days': non_pto_weekday_days,
+        'weekday_pto_days': weekday_pto_days,
+        'total_days_off': len(expanded_dates),
+    }
+
+
+def _build_explanation(start_day, end_day, metrics, holidays_map,
+                       holidays_require_pto, config, alternatives=None):
+    pto_days = metrics['pto_days']
+    total_days_off = metrics['total_days_off']
+    impact_score = total_days_off / pto_days if pto_days else 0
+    breakdown = {
+        'weekday_pto_days': len(metrics['weekday_pto_days']),
+        'weekend_days': len(metrics['weekend_days']),
+        'holiday_days': len(metrics['holiday_dates']),
+        'non_pto_weekday_days': len(metrics['non_pto_weekday_days']),
+        'free_days_total': total_days_off,
+    }
+    holiday_names = [
+        holidays_map[holiday_day]
+        for holiday_day in metrics['holiday_dates']
+        if holiday_day in holidays_map
+    ]
+    unit = 'hours' if config.get('pto_accrual_type') == 'hours' else 'days'
+    hours_per_day = config.get('pto_hours_per_day', 8.0) or 8.0
+    pto_amount = pto_days * hours_per_day if unit == 'hours' else pto_days
+    return {
+        'breakdown': breakdown,
+        'holidays_avoided': {
+            'count': len(holiday_names),
+            'names': holiday_names,
+        },
+        'balance_impact': {
+            'amount': round(pto_amount, 2),
+            'unit': unit,
+            'days_equivalent': pto_days,
+        },
+        'policy_assumptions': {
+            'holidays_require_pto': bool(holidays_require_pto),
+            'accrual_type': config.get('pto_accrual_type', 'days'),
+            'hours_per_day': round(hours_per_day, 2),
+        },
+        'score_formula': (
+            f'total_days_off ({total_days_off}) / pto_days ({pto_days}) '
+            f'= {impact_score:.2f}'
+        ),
+        'alternatives': alternatives or [],
+    }
+
+
+def _make_suggestion(start_day, end_day, title, reason, category, holidays_set,
+                     holidays_map, holidays_require_pto, config, holiday_date=None):
+    metrics = _suggestion_day_metrics(
+        start_day, end_day, holidays_set, holidays_require_pto
+    )
+    pto_days = metrics['pto_days']
+    days_off = metrics['total_days_off']
     return {
         'name': title,
         'start_date': start_day.strftime('%Y-%m-%d'),
         'end_date': end_day.strftime('%Y-%m-%d'),
         'holiday_date': holiday_date.strftime('%Y-%m-%d') if holiday_date else None,
-        'pto_dates': pto_dates,
+        'pto_dates': metrics['pto_dates'],
         'pto_days': pto_days,
         'total_days_off': days_off,
         'impact_score': round(days_off / pto_days, 2) if pto_days else 0,
         'category': category,
         'reason': reason,
-        'tags': [category.replace('-', ' ')]
+        'tags': [category.replace('-', ' ')],
+        '_metrics': metrics,
+        '_holidays_map': holidays_map,
+        '_config': config,
+        '_holidays_require_pto': holidays_require_pto,
     }
 
 
@@ -1106,7 +1200,9 @@ def generate_vacation_suggestions(year, config):
             reason,
             category,
             holidays_set,
+            holidays_map,
             holidays_require_pto,
+            config,
             holiday_date=holiday_date
         )
         if suggestion['pto_days'] <= 0:
@@ -1194,6 +1290,72 @@ def generate_vacation_suggestions(year, config):
         selected.append(candidate)
         selected_dates.update(candidate_dates)
         used_days += candidate['pto_days']
+
+    selected_keys = {
+        (candidate['start_date'], candidate['end_date']) for candidate in selected
+    }
+    for rank, candidate in enumerate(selected, start=1):
+        metrics = candidate.pop('_metrics')
+        holidays_map_for_candidate = candidate.pop('_holidays_map')
+        candidate_config = candidate.pop('_config')
+        candidate_holidays_require_pto = candidate.pop('_holidays_require_pto')
+        candidate_start = datetime.strptime(candidate['start_date'], '%Y-%m-%d').date()
+        candidate_end = datetime.strptime(candidate['end_date'], '%Y-%m-%d').date()
+        alternatives = []
+        variants = [
+            (candidate_start - timedelta(days=1), candidate_end),
+            (candidate_start, candidate_end - timedelta(days=1)),
+            (candidate_start, candidate_end + timedelta(days=1)),
+        ]
+        for alt_start, alt_end in variants:
+            key = (alt_start.strftime('%Y-%m-%d'), alt_end.strftime('%Y-%m-%d'))
+            if alt_start > alt_end or key in selected_keys or alt_start < earliest:
+                continue
+            alt_metrics = _suggestion_day_metrics(
+                alt_start, alt_end, holidays_set, candidate_holidays_require_pto
+            )
+            if not alt_metrics['pto_days']:
+                continue
+            alt_impact = alt_metrics['total_days_off'] / alt_metrics['pto_days']
+            alternatives.append({
+                'name': 'Nearby alternative',
+                'start_date': key[0],
+                'end_date': key[1],
+                'pto_days': alt_metrics['pto_days'],
+                'total_days_off': alt_metrics['total_days_off'],
+                'impact_score': round(alt_impact, 2),
+                'comparison': (
+                    f"Uses {abs(candidate['pto_days'] - alt_metrics['pto_days'])} "
+                    f"{'fewer' if alt_metrics['pto_days'] < candidate['pto_days'] else 'more'} "
+                    f"PTO day(s) and provides "
+                    f"{abs(candidate['total_days_off'] - alt_metrics['total_days_off'])} "
+                    f"{'fewer' if alt_metrics['total_days_off'] < candidate['total_days_off'] else 'more'} "
+                    'day(s) off.'
+                ),
+            })
+            if len(alternatives) == 2:
+                break
+        explanation = _build_explanation(
+            candidate_start,
+            candidate_end,
+            metrics,
+            holidays_map_for_candidate,
+            candidate_holidays_require_pto,
+            candidate_config,
+            alternatives=alternatives,
+        )
+        explanation['constraints'] = [
+            'Starts on or after today',
+            'Avoids overlapping planned vacations',
+            f'Fits within the {max_days_to_use:g} PTO-day suggestion budget',
+        ]
+        explanation['ranking_factors'] = {
+            'rank': rank,
+            'impact_score': candidate['impact_score'],
+            'days_off_per_pto_day': candidate['impact_score'],
+            'holiday_alignment': candidate['category'] == 'holiday-bridge',
+        }
+        candidate['explanation'] = explanation
 
     suggested_hours = used_days * hours_per_day
     if is_hours:

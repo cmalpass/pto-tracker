@@ -10,6 +10,8 @@ from playwright.async_api import async_playwright, Page
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from app import _suggestion_day_metrics, get_us_holidays
+
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 TEST_YEAR = date.today().year
 
@@ -360,6 +362,76 @@ async def test_export_and_note_validation(request_context):
     assert workbook['Vacation Schedule']['A2'].value.startswith("'=")
 
 
+async def test_suggestion_explainability(request_context):
+    """Verify suggestions expose explainability details and the UI can expand them."""
+    response = await request_context.get(f'/api/vacations/suggestions?year={TEST_YEAR}')
+    assert response.status == 200
+    payload = await response.json()
+    assert payload['suggestions'], "Suggestions should be available for explainability coverage"
+    suggestion = payload['suggestions'][0]
+    explanation = suggestion['explanation']
+    breakdown = explanation['breakdown']
+    assert sum(
+        breakdown[key] for key in (
+            'weekday_pto_days',
+            'weekend_days',
+            'holiday_days',
+            'non_pto_weekday_days',
+        )
+    ) == suggestion['total_days_off']
+    assert explanation['score_formula']
+    assert 'policy_assumptions' in explanation
+    assert 'constraints' in explanation
+    assert 'ranking_factors' in explanation
+    for item in payload['suggestions']:
+        item_breakdown = item['explanation']['breakdown']
+        assert sum(
+            item_breakdown[key] for key in (
+                'weekday_pto_days',
+                'weekend_days',
+                'holiday_days',
+                'non_pto_weekday_days',
+            )
+        ) == item['total_days_off']
+
+    holiday_metrics = _suggestion_day_metrics(
+        date(TEST_YEAR, 7, 2),
+        date(TEST_YEAR, 7, 2),
+        set(get_us_holidays(TEST_YEAR)),
+        True,
+    )
+    assert len(holiday_metrics['holiday_dates']) == 2
+    assert len(holiday_metrics['weekday_pto_days']) == 1
+    assert holiday_metrics['total_days_off'] == 4
+    weekend_metrics = _suggestion_day_metrics(
+        date(TEST_YEAR, 9, 4),
+        date(TEST_YEAR, 9, 4),
+        set(get_us_holidays(TEST_YEAR)),
+        True,
+    )
+    assert len(weekend_metrics['weekend_days']) == 2
+    assert weekend_metrics['total_days_off'] == 4
+
+    page = await request_context.get('/')
+    assert page.status == 200
+
+
+async def test_suggestion_explainability_ui():
+    """Verify a suggestion's Why? panel is rendered and expandable."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.goto(BASE_URL)
+        await page.click("button:has-text('Vacations')")
+        await page.wait_for_selector(".suggestion-item", timeout=10000)
+        await page.locator(".why-button").first.click()
+        panel = page.locator(".explanation-panel").first
+        assert await panel.is_visible()
+        assert await panel.locator(".day-breakdown-bar").is_visible()
+        assert await panel.locator("text=Constraints:").is_visible()
+        await browser.close()
+
+
 async def test_smart_warnings_and_suggestion_filters(request_context=None):
     """Verify vacation analysis warnings and server-side suggestion filters."""
     own_context = request_context is None
@@ -454,8 +526,11 @@ async def main():
         test_days_remaining_ignores_dst,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_suggestion_explainability,
+        test_suggestion_explainability_ui,
         test_smart_warnings_and_suggestion_filters,
         test_vacation_warning_controls_render,
+        test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
     ]
     passed = 0
     failed = 0
@@ -512,6 +587,8 @@ async def run_isolated_tests():
         test_days_remaining_ignores_dst,
         test_delete_vacation,
         test_export_and_note_validation,
+        test_suggestion_explainability,
+        test_suggestion_explainability_ui,
         test_smart_warnings_and_suggestion_filters,
         test_vacation_warning_controls_render,
         test_stats_preserve_upcoming_trip_count_and_expose_scheduled_days,
@@ -527,6 +604,7 @@ async def run_isolated_tests():
                     if test in {
                         test_policy_presets,
                         test_export_and_note_validation,
+                        test_suggestion_explainability,
                         test_multi_year_forecast_and_heatmap,
                         test_holiday_country_configuration,
                         test_smart_warnings_and_suggestion_filters,
