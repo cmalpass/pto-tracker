@@ -34,6 +34,33 @@ test('validates canonical dates and configured timezone boundaries', () => {
     assert.equal(PTO.getLocalToday({ timezone: 'America/Los_Angeles' }, instant), '2025-12-31');
 });
 
+test('validates leave types and quarter-hour partial-day amounts against policy hours', () => {
+    assert.equal(PTO.normalizeLeaveType('Sick'), 'sick');
+    assert.equal(PTO.normalizeLeaveType('unknown-type'), 'vacation');
+    assert.deepEqual(PTO.normalizeBooking(0, 4, config), {
+        days: 0,
+        hours: 4,
+        amount: 0.5,
+        total_hours: 4
+    });
+    assert.deepEqual(PTO.normalizeBooking(0.5, 0, config).amount, 0.5);
+    assert.throws(
+        () => PTO.normalizeBooking(0, 8.25, config),
+        /cannot exceed 8 hours per day/
+    );
+    assert.throws(
+        () => PTO.normalizeBooking(0.333, 0, config),
+        /quarter-hours/
+    );
+    assert.equal(PTO.getVacationTypeBreakdown(2026, config, [{
+        type: 'sick',
+        start_date: '2026-08-03',
+        end_date: '2026-08-03',
+        days: 0,
+        hours: 4
+    }])[1].amount, 0.5);
+});
+
 test('generates escaped CRLF ICS with stable date-only UIDs and round-trips dates', () => {
     const vacation = {
         id: 7,
@@ -75,6 +102,7 @@ test('parses CSV quoting and rejects timed ICS events during validation', () => 
         days: '2',
         hours: '0'
     });
+
     const timed = PTOTransfer.parseICS([
         'BEGIN:VCALENDAR',
         'BEGIN:VEVENT',
@@ -87,6 +115,31 @@ test('parses CSV quoting and rejects timed ICS events during validation', () => 
     const result = PTOTransfer.validateRows(timed, { pto: PTO, config });
     assert.equal(result.valid.length, 0);
     assert.match(result.invalid[0].errors.join(' '), /timed events are not supported/i);
+});
+
+test('round-trips leave types and partial amounts through CSV and ICS metadata', () => {
+    const record = {
+        id: 4,
+        name: 'Sick appointment',
+        start_date: '2026-09-01',
+        end_date: '2026-09-01',
+        days: 0,
+        hours: 3.75,
+        type: 'sick'
+    };
+    const csv = PTOTransfer.toCSV([record]);
+    const csvRow = PTOTransfer.parseCSV(csv)[0];
+    assert.equal(csvRow.type, 'sick');
+    const validated = PTOTransfer.validateRows([csvRow], { pto: PTO, config });
+    assert.equal(validated.valid[0].type, 'sick');
+    assert.equal(validated.valid[0].hours, 3.75);
+
+    const ics = PTOTransfer.toICS([record], { timestamp: '2026-01-02T03:04:05Z' });
+    assert.match(ics, /CATEGORIES:Sick\r\n/);
+    assert.match(ics, /X-PTO-HOURS:3\.75\r\n/);
+    const icsRow = PTOTransfer.parseICS(ics)[0];
+    assert.equal(icsRow.type, 'sick');
+    assert.equal(icsRow.hours, '3.75');
 });
 
 test('detects duplicate and overlapping imported vacations before writing', () => {
@@ -158,27 +211,28 @@ test('calculates conflicts, balances, forecasts, suggestions, and heatmap', () =
     const suggestions = PTO.generateVacationSuggestions(2026, config, [vacation], {
         today: '2026-01-01'
     });
-
-    test('persists and round-trips versioned browser backups', async () => {
-        await PTOStore.clear('config');
-        await PTOStore.clear('vacations');
-        await PTOStore.clear('notes');
-        await PTOStore.putConfig(config);
-        await PTOStore.putVacation({
-            name: 'Backup trip',
-            start_date: '2026-08-03',
-            end_date: '2026-08-03',
-            days: 1,
-            hours: 0
-        });
-        await PTOStore.putNote({ date: '2026-01-01', text: 'Backup note' });
-        const backup = JSON.parse(await PTOStore.exportJSON());
-        assert.equal(backup.schemaVersion, 2);
-        assert.equal(backup.data.vacations.length, 1);
-        await PTOStore.importJSON(backup);
-        assert.equal((await PTOStore.listNotes())[0].text, 'Backup note');
-    });
     assert.equal(Array.isArray(suggestions.suggestions), true);
+});
+
+test('persists and round-trips versioned browser backups', async () => {
+    await PTOStore.clear('config');
+    await PTOStore.clear('vacations');
+    await PTOStore.clear('notes');
+    await PTOStore.putConfig(config);
+    await PTOStore.putVacation({
+        name: 'Backup trip',
+        start_date: '2026-08-03',
+        end_date: '2026-08-03',
+        days: 1,
+        hours: 0
+    });
+    await PTOStore.putNote({ date: '2026-01-01', text: 'Backup note' });
+    const backup = JSON.parse(await PTOStore.exportJSON());
+    assert.equal(backup.schemaVersion, 3);
+    assert.equal(backup.data.vacations.length, 1);
+    assert.equal(backup.data.vacations[0].type, 'vacation');
+    await PTOStore.importJSON(backup);
+    assert.equal((await PTOStore.listNotes())[0].text, 'Backup note');
 });
 
 test('soft deletes records, supports undo, filters active queries, and keeps history', async () => {
@@ -217,6 +271,7 @@ test('soft deletes records, supports undo, filters active queries, and keeps his
 });
 
 test('migrates legacy fallback records and imports schema v1 backups', async () => {
+   localStorageData.delete('pto-tracker:data:v3');
    localStorageData.delete('pto-tracker:data:v2');
    localStorageData.set('pto-tracker:data:v1', JSON.stringify({
        config: [],
@@ -233,7 +288,8 @@ test('migrates legacy fallback records and imports schema v1 backups', async () 
    }));
    const migrated = await PTOStore.listVacations();
    assert.equal(migrated[0].deleted_at, null);
-   assert.ok(localStorageData.get('pto-tracker:data:v2'));
+   assert.ok(localStorageData.get('pto-tracker:data:v3'));
+   assert.equal(migrated[0].type, 'vacation');
 
    await PTOStore.importJSON({
        schemaVersion: 1,
@@ -251,4 +307,5 @@ test('migrates legacy fallback records and imports schema v1 backups', async () 
        }
    });
    assert.equal((await PTOStore.listVacations())[0].name, 'Old backup');
+   assert.equal((await PTOStore.listVacations())[0].type, 'vacation');
 });

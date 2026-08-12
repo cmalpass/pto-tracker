@@ -65,6 +65,75 @@ async def test_vacation_persists_and_deletes(browser):
         await context.close()
 
 
+async def test_leave_types_and_partial_day_validation(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("button:has-text('Vacations')")
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "Sick appointment")
+        await page.select_option("#vacation-type", "sick")
+        await page.fill("input[name='start_date']", "2026-12-01")
+        await page.fill("input[name='end_date']", "2026-12-01")
+        await page.uncheck("#vacation-auto-days")
+        await page.fill("input[name='hours']", "4")
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector("text=Sick appointment")
+        assert await page.locator(".leave-type-sick").count() >= 1
+        stored = await page.evaluate(
+            "() => PTOStore.listVacations().then(items => items[0])"
+        )
+        assert stored["type"] == "sick"
+        assert float(stored["hours"]) == 4
+        assert float(stored["days"]) == 0
+        assert await page.locator("#type-breakdown .type-breakdown-row.leave-type-sick").count() == 1
+
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "Invalid partial booking")
+        await page.fill("input[name='start_date']", "2026-12-02")
+        await page.fill("input[name='end_date']", "2026-12-02")
+        await page.uncheck("#vacation-auto-days")
+        await page.fill("input[name='hours']", "8.25")
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector("#toast.show")
+        assert "cannot exceed" in (await page.locator("#toast").text_content()).lower()
+        assert await page.evaluate(
+            "() => PTOStore.listVacations().then(items => items.length)"
+        ) == 1
+    finally:
+        await context.close()
+
+
+async def test_legacy_browser_backup_migrates_leave_type(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        migrated = await page.evaluate(
+            """async () => {
+                await PTOStore.importJSON({
+                    schemaVersion: 2,
+                    data: {
+                        config: null,
+                        vacations: [{
+                            id: 7,
+                            name: 'Legacy vacation',
+                            start_date: '2026-12-03',
+                            end_date: '2026-12-03',
+                            days: 1,
+                            hours: 0
+                        }],
+                        notes: []
+                    }
+                });
+                return (await PTOStore.listVacations())[0];
+            }"""
+        )
+        assert migrated["type"] == "vacation"
+        assert await page.evaluate("() => PTOStore.DB_VERSION == 3")
+    finally:
+        await context.close()
+
+
 async def test_notes_and_json_backup(browser):
     context, page = await new_page(browser)
     try:
@@ -276,6 +345,8 @@ async def main():
         tests = [
             test_dashboard_and_forecast,
             test_vacation_persists_and_deletes,
+            test_leave_types_and_partial_day_validation,
+            test_legacy_browser_backup_migrates_leave_type,
             test_notes_and_json_backup,
             test_vacation_calendar_export_and_import_preview,
             test_settings_stay_local,

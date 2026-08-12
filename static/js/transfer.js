@@ -10,6 +10,12 @@
 
     const CRLF = '\r\n';
     const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+    const LEAVE_TYPES = Object.freeze({
+        vacation: { label: 'Vacation' },
+        sick: { label: 'Sick' },
+        personal: { label: 'Personal' },
+        holiday: { label: 'Holiday' }
+    });
 
     function isCanonicalDate(value) {
         if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
@@ -24,6 +30,20 @@
         if (!isCanonicalDate(value)) {
             throw new TypeError(`${label} must use YYYY-MM-DD format`);
         }
+    }
+
+    function normalizeLeaveType(value) {
+        const candidate = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+        const aliases = {
+            pto: 'vacation',
+            paid_time_off: 'vacation',
+            paid_leave: 'vacation',
+            personal_day: 'personal',
+            public_holiday: 'holiday'
+        };
+        const normalized = aliases[candidate] || candidate;
+        return Object.prototype.hasOwnProperty.call(LEAVE_TYPES, normalized)
+            ? normalized : 'vacation';
     }
 
     function addDays(value, amount) {
@@ -97,7 +117,11 @@
             throw new RangeError('start_date cannot be after end_date');
         }
         const name = String(vacation.name ?? '').trim() || 'Vacation';
-        return { ...vacation, name };
+        return {
+            ...vacation,
+            name,
+            type: normalizeLeaveType(vacation.type ?? vacation.leave_type)
+        };
     }
 
     function toICS(vacations = [], options = {}) {
@@ -116,6 +140,10 @@
                 `DTSTART;VALUE=DATE:${icsDate(vacation.start_date)}`,
                 `DTEND;VALUE=DATE:${icsDate(addDays(vacation.end_date, 1))}`,
                 `SUMMARY:${escapeIcsText(vacation.name)}`,
+                `CATEGORIES:${escapeIcsText(LEAVE_TYPES[vacation.type].label)}`,
+                `X-PTO-TYPE:${vacation.type}`,
+                `X-PTO-DAYS:${vacation.days ?? ''}`,
+                `X-PTO-HOURS:${vacation.hours ?? ''}`,
                 'END:VEVENT'
             );
         });
@@ -130,13 +158,14 @@
 
     function toCSV(vacations = []) {
         const rows = [
-            ['Name', 'Start Date', 'End Date', 'Days', 'Hours'],
+            ['Name', 'Start Date', 'End Date', 'Days', 'Hours', 'Type'],
             ...vacations.map(normalizeExportVacation).map(vacation => [
                 vacation.name,
                 vacation.start_date,
                 vacation.end_date,
                 vacation.days ?? '',
-                vacation.hours ?? ''
+                vacation.hours ?? '',
+                vacation.type
             ])
         ];
         return `${rows.map(row => row.map(escapeCsv).join(',')).join(CRLF)}${CRLF}`;
@@ -195,7 +224,8 @@
             start_date: ['start_date', 'start', 'from'],
             end_date: ['end_date', 'end', 'to'],
             days: ['days', 'pto_days'],
-            hours: ['hours', 'pto_hours']
+            hours: ['hours', 'pto_hours'],
+            type: ['type', 'leave_type', 'category']
         };
         const indexFor = key => aliases[key].map(alias => headers.indexOf(alias))
             .find(index => index >= 0);
@@ -203,14 +233,21 @@
         ['name', 'start_date', 'end_date'].forEach(key => {
             if (indexes[key] == null) throw new TypeError(`CSV is missing a ${key.replace('_', ' ')} column`);
         });
-        return rows.map((values, index) => ({
-            source: `CSV row ${index + 2}`,
-            name: values[indexes.name] ?? '',
-            start_date: values[indexes.start_date] ?? '',
-            end_date: values[indexes.end_date] ?? '',
-            days: indexes.days == null ? null : values[indexes.days] ?? '',
-            hours: indexes.hours == null ? null : values[indexes.hours] ?? ''
-        }));
+        return rows.map((values, index) => {
+            const row = {
+                source: `CSV row ${index + 2}`,
+                name: values[indexes.name] ?? '',
+                start_date: values[indexes.start_date] ?? '',
+                end_date: values[indexes.end_date] ?? '',
+                days: indexes.days == null ? null : values[indexes.days] ?? '',
+                hours: indexes.hours == null ? null : values[indexes.hours] ?? ''
+            };
+            if (indexes.type != null) {
+                const type = normalizeLeaveType(values[indexes.type]);
+                if (type !== 'vacation') row.type = type;
+            }
+            return row;
+        });
     }
 
     function splitIcsProperty(line) {
@@ -254,6 +291,11 @@
             }
             if (!event) return;
             if (property.name === 'SUMMARY') event.name = unescapeIcsText(property.value);
+            if (property.name === 'X-PTO-TYPE') event.type = normalizeLeaveType(property.value);
+            if (property.name === 'X-PTO-DAYS') event.days = property.value.trim() === ''
+                ? null : property.value;
+            if (property.name === 'X-PTO-HOURS') event.hours = property.value.trim() === ''
+                ? null : property.value;
             if (property.name === 'DTSTART') {
                 if (property.params.VALUE !== 'DATE') {
                     event.errors = ['ICS DTSTART must use VALUE=DATE; timed events are not supported'];
@@ -283,14 +325,18 @@
         });
         if (event) throw new TypeError('ICS contains an unterminated VEVENT');
         if (!rows.length) throw new TypeError('ICS file contains no VEVENT entries');
-        return rows.map(row => ({
-            ...row,
-            name: row.name || '',
-            start_date: row.start_date || '',
-            end_date: row.end_date_exclusive ? addDays(row.end_date_exclusive, -1) : row.start_date,
-            days: null,
-            hours: null
-        }));
+        return rows.map(row => {
+            const result = {
+                ...row,
+                name: row.name || '',
+                start_date: row.start_date || '',
+                end_date: row.end_date_exclusive ? addDays(row.end_date_exclusive, -1) : row.start_date,
+                days: row.days == null ? null : row.days,
+                hours: row.hours == null ? null : row.hours
+            };
+            if (result.type == null || result.type === 'vacation') delete result.type;
+            return result;
+        });
     }
 
     function parse(text, format) {
@@ -308,7 +354,7 @@
             errors.push(`${label} must be a non-negative number`);
             return 0;
         }
-        return Math.round(parsed * 4) / 4;
+        return parsed;
     }
 
     function validateRows(rows, options = {}) {
@@ -337,12 +383,22 @@
                 end_date: end,
                 days: days,
                 hours: hours,
+                type: normalizeLeaveType(input.type),
                 auto_days: false
             };
             const hasDays = input.days != null && String(input.days).trim() !== '';
             if (!hasDays && pto && isCanonicalDate(start) && isCanonicalDate(end)) {
                 candidate.days = pto.getVacationDays(start, end, config);
                 candidate.auto_days = true;
+            }
+            if (pto?.normalizeBooking && !errors.length) {
+                try {
+                    const booking = pto.normalizeBooking(candidate.days, candidate.hours, config);
+                    candidate.days = booking.days;
+                    candidate.hours = booking.hours;
+                } catch (error) {
+                    errors.push(error.message);
+                }
             }
             const key = `${name.toLowerCase()}|${start}|${end}`;
             const duplicate = seen.has(key) || active.some(item =>
@@ -385,7 +441,9 @@
     }
 
     return Object.freeze({
+        LEAVE_TYPES,
         isCanonicalDate,
+        normalizeLeaveType,
         escapeIcsText,
         unescapeIcsText,
         vacationUid,

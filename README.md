@@ -14,6 +14,8 @@ server-side database, sync, or authentication features.
 - Safe soft-delete with undo and retained client-side change history
 - Versioned JSON backup/restore plus client-side CSV, ICS, and Excel-compatible exports
 - Browser-local CSV/ICS vacation import with validation, duplicate detection, and confirmation preview
+- Vacation, sick, personal, and holiday leave types with accessible labels/icons and per-type dashboard totals
+- Quarter-hour and partial-day bookings validated against the configured hours per day
 
 ## Architecture
 
@@ -29,14 +31,15 @@ and settings without a frontend framework or build step. Renderers construct DOM
 and assign user/imported values with `textContent` or safe attributes; intentional SVG
 icons are created from fixed element definitions.
 
-Dates are stored and exported as canonical `YYYY-MM-DD` strings. The configured IANA
-timezone controls the browser-local current date and year boundaries without converting
-stored date values.
+Dates are stored and exported as canonical `YYYY-MM-DD` strings. Vacation records include
+a normalized leave type plus `days` and quarter-hour `hours`; older records migrate to the
+default `vacation` type. The configured IANA timezone controls the browser-local current
+date and year boundaries without converting stored date values.
 
-ICS vacation exports use all-day `VALUE=DATE` events and stable UIDs. Calendar exchange
-and CSV import happen entirely in the browser; there is no subscription URL, sync service,
-authentication, or external calendar API. JSON backup/restore remains a separate full-data
-operation.
+ICS vacation exports use all-day `VALUE=DATE` events and stable UIDs, with leave type and
+partial-day metadata in portable `X-PTO-*` properties. Calendar exchange and CSV import
+happen entirely in the browser; there is no subscription URL, sync service, authentication,
+or external calendar API. JSON backup/restore remains a separate full-data operation.
 
 **Backup note:** browser profile storage is device-specific and can be lost when site
 data is cleared or evicted. Use Export JSON regularly, especially before clearing

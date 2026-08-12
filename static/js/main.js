@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260812-4';
+} from './modules/state.js?v=20260812-5';
 import {
     announce,
     closeDialog,
@@ -15,31 +15,32 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260812-4';
+} from './modules/dom.js?v=20260812-5';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
     renderCalendar as renderCalendarDom,
     renderVacationsList as renderVacationsListDom,
+    renderTypeBreakdown as renderTypeBreakdownDom,
     renderVacationSuggestions as renderVacationSuggestionsDom,
     renderVacationWarnings as renderVacationWarningsDom,
     renderStoredNotes as renderStoredNotesDom,
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom
-} from './modules/rendering.js?v=20260812-4';
+} from './modules/rendering.js?v=20260812-5';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260812-4';
-import { generateSuggestions } from './modules/suggestions.js?v=20260812-4';
-import { configWarnings } from './modules/settings.js?v=20260812-4';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-4';
+} from './modules/calendar.js?v=20260812-5';
+import { generateSuggestions } from './modules/suggestions.js?v=20260812-5';
+import { configWarnings } from './modules/settings.js?v=20260812-5';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-5';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260812-4';
+} from './modules/forecast.js?v=20260812-5';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -168,6 +169,7 @@ async function loadDashboard() {
         const now = parseIsoDateToLocal(state.today);
         const balance = PTO.calculateBalanceOnDate(config.current_date, config, vacations);
         const yearlyForecast = yearlyForecastFor(config.current_year, config, vacations);
+        const typeBreakdown = PTO.getVacationTypeBreakdown(config.current_year, config, vacations);
         const remainingUsage = PTO.calculateVacationUsageInRange(
             config.current_date, `${config.current_year}-12-31`, config, vacations);
         const stats = {
@@ -196,6 +198,7 @@ async function loadDashboard() {
         const scheduledPtoDays = stats.remaining_scheduled_pto_days ?? stats.remaining_vacation_days ?? 0;
         document.getElementById('stat-scheduled-pto').textContent = Number(scheduledPtoDays).toFixed(1);
         document.getElementById('stat-remaining-days').textContent = daysRemainingThisYear();
+        renderTypeBreakdownDom(typeBreakdown, config.pto_accrual_type === 'hours' ? 'hours' : 'days');
         document.getElementById('accrual-per-period').textContent = `${config.pto_accrual_per_pay_period} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
         document.getElementById('pay-periods').textContent = config.pay_periods_per_year;
         const annual = (config.pto_accrual_per_pay_period * config.pay_periods_per_year);
@@ -395,10 +398,12 @@ function openCreateVacationModal(prefillDate = null) {
     document.getElementById('vacation-modal-title').textContent = 'Add Vacation';
     document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
     document.getElementById('vacation-auto-days').checked = true;
+    document.getElementById('vacation-type').value = 'vacation';
     const selectedDate = prefillDate || getTodayIsoDate();
     document.getElementById('vacation-start').value = selectedDate;
     document.getElementById('vacation-end').value = selectedDate;
     syncVacationDateBounds();
+    document.getElementById('vacation-days').value = 0;
     document.getElementById('vacation-hours').value = 0;
     calcVacationDays();
     openDialog(document.getElementById('vacation-modal'), '#vacation-name');
@@ -411,11 +416,14 @@ function editVacation(id) {
     document.getElementById('vacation-modal-title').textContent = 'Edit Vacation';
     document.getElementById('btn-submit-vacation').textContent = 'Save Changes';
     document.getElementById('vacation-name').value = vacation.name;
+    document.getElementById('vacation-type').value = PTO.normalizeLeaveType(vacation.type);
     document.getElementById('vacation-start').value = vacation.start_date;
     document.getElementById('vacation-end').value = vacation.end_date;
     syncVacationDateBounds();
+    document.getElementById('vacation-days').value = vacation.days || 0;
     document.getElementById('vacation-hours').value = vacation.hours || 0;
-    document.getElementById('vacation-auto-days').checked = (vacation.days || 0) > 0;
+    document.getElementById('vacation-auto-days').checked = vacation.auto_days !== false
+        && (vacation.days || 0) > 0;
     calcVacationDays();
     openDialog(document.getElementById('vacation-modal'), '#vacation-name');
 }
@@ -467,8 +475,13 @@ function setupVacationModal() {
         calcVacationDays();
     });
     document.getElementById('vacation-hours').addEventListener('change', calcVacationDays);
-    document.getElementById('vacation-auto-days').addEventListener('change', calcVacationDays);
-    ['vacation-start', 'vacation-end', 'vacation-days', 'vacation-hours'].forEach(id => {
+    document.getElementById('vacation-auto-days').addEventListener('change', () => {
+        if (!document.getElementById('vacation-auto-days').checked) {
+            document.getElementById('vacation-days').value = 0;
+        }
+        calcVacationDays();
+    });
+    ['vacation-start', 'vacation-end', 'vacation-days', 'vacation-hours', 'vacation-type'].forEach(id => {
         document.getElementById(id).addEventListener('input', scheduleVacationAnalysis);
         document.getElementById(id).addEventListener('change', scheduleVacationAnalysis);
     });
@@ -476,15 +489,21 @@ function setupVacationModal() {
         e.preventDefault();
         const form = e.target;
         const autoDays = form.auto_days.checked;
-        const data = {
-            name: form.name.value,
-            start_date: form.start_date.value,
-            end_date: form.end_date.value,
-            days: parseFloat(form.days.value) || 0,
-            hours: normalizeQuarterHours(parseFloat(form.hours.value) || 0),
-            auto_days: autoDays
-        };
         try {
+            const booking = PTO.normalizeBooking(
+                parseFloat(form.days.value) || 0,
+                parseFloat(form.hours.value) || 0,
+                state.config
+            );
+            const data = {
+                name: form.name.value,
+                start_date: form.start_date.value,
+                end_date: form.end_date.value,
+                days: booking.days,
+                hours: booking.hours,
+                type: PTO.normalizeLeaveType(form.elements.type.value),
+                auto_days: autoDays
+            };
             const conflict = PTO.detectVacationConflicts(
                 data.start_date, data.end_date, state.vacations, state.editingVacationId);
             if (conflict.has_conflicts) throw new Error(conflict.error);
@@ -624,7 +643,7 @@ async function calcVacationDays() {
         document.getElementById('vacation-preview').classList.remove('active');
         return;
     }
-    let days = 0;
+    let days = Number(daysInput.value) || 0;
     if (autoDays) {
         const requestId = ++state.vacationCalcRequestId;
         try {
@@ -643,7 +662,7 @@ async function calcVacationDays() {
         }
     }
     daysInput.value = days;
-    daysInput.readOnly = true;
+    daysInput.readOnly = autoDays;
     const preview = document.getElementById('vacation-preview');
     const hours = normalizeQuarterHours(parseFloat(hoursInput.value) || 0);
     if (days > 0 && hours > 0) preview.textContent = `This entry will use ${days} PTO day(s) and ${hours} hour(s)`;
@@ -728,8 +747,10 @@ function setupDataTransfer() {
         event.preventDefault();
         // Excel export intentionally uses fixed table markup; each cell is escaped.
         const rows = [
-            ['Name', 'Start Date', 'End Date', 'Days', 'Hours'],
-            ...state.vacations.map(v => [v.name, v.start_date, v.end_date, v.days, v.hours])
+            ['Name', 'Start Date', 'End Date', 'Days', 'Hours', 'Type'],
+            ...state.vacations.map(v => [
+                v.name, v.start_date, v.end_date, v.days, v.hours, PTO.leaveType(v.type).label
+            ])
         ].map(row => `<tr>${row.map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
         downloadText(
             `<table><thead>${rows.split('</tr>')[0]}</tr></thead><tbody>${rows.split('</tr>').slice(1).join('</tr>')}</tbody></table>`,
@@ -865,16 +886,18 @@ function renderVacationImportPreview(result, format, filename) {
         status.textContent = row.valid ? 'Ready' : 'Skipped';
         const name = document.createElement('td');
         name.textContent = row.name;
+        const type = document.createElement('td');
+        type.textContent = PTO.leaveType(row.type).label;
         const dates = document.createElement('td');
         dates.textContent = `${row.start_date} to ${row.end_date}`;
         const details = document.createElement('td');
         details.className = 'import-row-detail';
         const warnings = row.analysis?.warnings?.filter(item => item.severity !== 'error')
             .map(item => item.message) || [];
-        details.textContent = row.valid && warnings.length
-            ? warnings.join(' ')
+        details.textContent = row.valid
+            ? `${PTO.leaveType(row.type).label}: ${warnings.join(' ')}`.trim()
             : row.errors.join('; ');
-        tableRow.append(status, name, dates, details);
+        tableRow.append(status, name, type, dates, details);
         body.append(tableRow);
     });
     confirmButton.disabled = result.valid.length === 0;
@@ -985,6 +1008,7 @@ async function openSettings() {
         document.getElementById('holiday-country').value = config.holiday_country || 'US';
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
         document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
+        document.getElementById('hours-per-day').value = config.pto_hours_per_day || 8;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
         document.getElementById('accrual-method').value = config.accrual_method || 'full';
         document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;

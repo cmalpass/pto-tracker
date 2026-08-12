@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260812-4';
-import { clearElement, element, appendText } from './dom.js?v=20260812-4';
+import { DAYS, MONTHS, state } from './state.js?v=20260812-5';
+import { clearElement, element, appendText } from './dom.js?v=20260812-5';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -21,15 +21,39 @@ function addSvgIcon(parent, kind, size = 20) {
             ? [['polyline', { points: '3 6 5 6 21 6' }], ['path', {
                 d: 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'
             }]]
-            : [['path', {
-                d: 'M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2.75 2.75 0 0 1-5.46 0'
-            }]];
+            : kind === 'sick'
+                ? [['path', { d: 'M9 2v4M15 2v4M4 9h16M6 4h12a2 2 0 0 1 2 2v13H4V6a2 2 0 0 1 2-2z' }],
+                    ['path', { d: 'M12 12v4M10 14h4' }]]
+                : kind === 'personal'
+                    ? [['circle', { cx: '12', cy: '8', r: '3' }],
+                        ['path', { d: 'M5 21a7 7 0 0 1 14 0' }]]
+                    : kind === 'holiday'
+                        ? [['path', { d: 'M4 9h16M6 9v10h12V9M12 9V4' }],
+                            ['path', { d: 'M12 4c-2-3-6-1-4 2 1 1 3 1 4 1M12 4c2-3 6-1 4 2-1 1-3 1-4 1' }]]
+                        : [['path', {
+                            d: 'M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2.75 2.75 0 0 1-5.46 0'
+                        }]];
     paths.forEach(([name, attributes]) => {
         const path = document.createElementNS('http://www.w3.org/2000/svg', name);
         Object.entries(attributes).forEach(([key, value]) => path.setAttribute(key, value));
         svg.append(path);
     });
     parent.append(svg);
+}
+
+function leaveTypeInfo(type) {
+    return globalThis.PTO.leaveType(type);
+}
+
+function appendLeaveBadge(parent, type, includeIcon = true) {
+    const info = leaveTypeInfo(type);
+    const badge = element('span', `leave-type-badge leave-type-${info.key}`);
+    badge.title = info.label;
+    badge.setAttribute('aria-label', info.label);
+    if (includeIcon) addSvgIcon(badge, info.icon, 14);
+    appendText(badge, 'span', 'leave-type-label', info.label);
+    parent.append(badge);
+    return badge;
 }
 
 function appendEmpty(container, empty) {
@@ -96,17 +120,23 @@ export function renderMiniCalendar(now, events) {
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const holidayDates = events.filter(event => event.type === 'holiday')
         .map(event => Number(event.date.split('-')[2]));
-    const vacationDates = events.filter(event => event.type === 'vacation')
-        .map(event => Number(event.date.split('-')[2]));
+    const vacationEvents = events.filter(event => event.type === 'vacation');
+    const vacationDates = vacationEvents.map(event => Number(event.date.split('-')[2]));
     for (let i = 0; i < firstDay; i++) grid.append(element('div', 'mini-cal-day other-month'));
     for (let day = 1; day <= daysInMonth; day++) {
         const classes = [
             'mini-cal-day',
             day === now.getDate() ? 'today' : '',
             holidayDates.includes(day) ? 'holiday' : '',
-            vacationDates.includes(day) ? 'vacation' : ''
+            vacationDates.includes(day) ? 'vacation' : '',
+            ...vacationEvents.filter(event => Number(event.date.split('-')[2]) === day)
+                .map(event => `leave-type-${event.leave_type || 'vacation'}`)
         ].filter(Boolean).join(' ');
-        appendText(grid, 'div', classes, day);
+        const cell = appendText(grid, 'div', classes, day);
+        const dayTypes = vacationEvents
+            .filter(event => Number(event.date.split('-')[2]) === day)
+            .map(event => leaveTypeInfo(event.leave_type).label);
+        if (dayTypes.length) cell.title = dayTypes.join(', ');
     }
     container.append(grid);
 }
@@ -142,7 +172,9 @@ export function renderCalendar(year, month, today, monthEvents) {
             today.getDate() === day && today.getMonth() === month && today.getFullYear() === year
                 ? 'today' : '',
             dayEvents.some(event => event.type === 'holiday') ? 'holiday' : '',
-            dayEvents.some(event => event.type === 'vacation') ? 'vacation' : ''
+            dayEvents.some(event => event.type === 'vacation') ? 'vacation' : '',
+            ...dayEvents.filter(event => event.type === 'vacation')
+                .map(event => `leave-type-${event.leave_type || 'vacation'}`)
         ].filter(Boolean).join(' ');
         const cell = element('button', classes);
         cell.type = 'button';
@@ -151,7 +183,9 @@ export function renderCalendar(year, month, today, monthEvents) {
             weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
         });
         const eventLabels = dayEvents.map(event =>
-            `${event.type === 'holiday' ? 'Holiday' : 'Vacation'}: ${event.name || 'Vacation'}`);
+            event.type === 'holiday'
+                ? `Holiday: ${event.name || 'Holiday'}`
+                : `${leaveTypeInfo(event.leave_type).label}: ${event.name || 'Leave'}`);
         const stateLabels = [
             classes.includes('today') ? 'Today' : '',
             ...eventLabels
@@ -160,10 +194,13 @@ export function renderCalendar(year, month, today, monthEvents) {
         cell.title = cell.getAttribute('aria-label');
         appendText(cell, 'span', 'day-number', day);
         dayEvents.slice(0, 2).forEach(event => {
-            const label = event.type === 'holiday'
-                ? String(event.name || '').substring(0, 8)
-                : String(event.name || 'Vacation').substring(0, 10);
-            appendText(cell, 'span', `day-event ${event.type}`, label);
+            const typeLabel = event.type === 'holiday'
+                ? 'Holiday' : leaveTypeInfo(event.leave_type).label;
+            const label = `${typeLabel}: ${String(event.name || typeLabel).substring(0, 10)}`;
+            const eventElement = appendText(cell, 'span', `day-event ${event.type}${
+                event.type === 'vacation' ? ` leave-type-${event.leave_type || 'vacation'}` : ''
+            }`, label.substring(0, 28));
+            eventElement.title = label;
         });
         container.append(cell);
     }
@@ -191,15 +228,19 @@ export function renderVacationsList(vacations) {
     }
     hideEmpty(empty);
     vacations.forEach(vacation => {
+        const type = leaveTypeInfo(vacation.type);
         const start = new Date(`${vacation.start_date}T00:00:00`);
         const end = new Date(`${vacation.end_date}T00:00:00`);
         const dateStr = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${
             end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
         const item = element('div', 'vacation-item');
         item.dataset.id = vacation.id;
-        const icon = element('div', 'vacation-icon');
-        addSvgIcon(icon, 'vacation');
+        const icon = element('div', `vacation-icon leave-type-${type.key}`);
+        icon.title = type.label;
+        icon.setAttribute('aria-label', type.label);
+        addSvgIcon(icon, type.icon);
         const info = element('div', 'vacation-info');
+        appendLeaveBadge(info, type.key);
         appendText(info, 'div', 'vacation-name', vacation.name);
         appendText(info, 'div', 'vacation-dates', dateStr);
         const usage = [];
@@ -209,6 +250,7 @@ export function renderVacationsList(vacations) {
         }
         const usageElement = element('div', 'vacation-days');
         usageElement.textContent = usage.length ? usage.join(' / ') : '0h';
+        usageElement.setAttribute('aria-label', `${type.label}: ${usageElement.textContent}`);
         const actions = element('div', 'vacation-actions');
         const edit = element('button', 'vacation-edit');
         edit.dataset.vacationId = vacation.id;
@@ -223,6 +265,23 @@ export function renderVacationsList(vacations) {
         actions.append(edit, remove);
         item.append(icon, info, usageElement, actions);
         container.append(item);
+    });
+}
+
+export function renderTypeBreakdown(breakdown, unit = 'days') {
+    const container = document.getElementById('type-breakdown');
+    if (!container) return;
+    clearElement(container);
+    (breakdown || []).forEach(entry => {
+        const row = element('div', `type-breakdown-row leave-type-${entry.key}`);
+        const label = element('div', 'type-breakdown-label');
+        appendLeaveBadge(label, entry.key);
+        appendText(label, 'small', '', `${entry.records} booking${entry.records === 1 ? '' : 's'}`);
+        const amount = appendText(row, 'strong', 'type-breakdown-amount',
+            `${Number(entry.amount || 0).toFixed(2)} ${unit}`);
+        amount.setAttribute('aria-label', `${entry.label}: ${amount.textContent}`);
+        row.prepend(label);
+        container.append(row);
     });
 }
 
