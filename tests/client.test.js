@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const PTO = require('../static/js/pto.js');
 const PTOStore = require('../static/js/store.js');
+const PTOTransfer = require('../static/js/transfer.js');
 
 const config = {
     holiday_country: 'US',
@@ -31,6 +32,86 @@ test('validates canonical dates and configured timezone boundaries', () => {
     const instant = '2026-01-01T00:30:00.000Z';
     assert.equal(PTO.getLocalToday({ timezone: 'UTC' }, instant), '2026-01-01');
     assert.equal(PTO.getLocalToday({ timezone: 'America/Los_Angeles' }, instant), '2025-12-31');
+});
+
+test('generates escaped CRLF ICS with stable date-only UIDs and round-trips dates', () => {
+    const vacation = {
+        id: 7,
+        name: 'Summer, family\\ntrip; 2026',
+        start_date: '2026-08-03',
+        end_date: '2026-08-05'
+    };
+    const ics = PTOTransfer.toICS([vacation], { timestamp: '2026-01-02T03:04:05Z' });
+    assert.match(ics, /UID:vacation-7@pto-tracker\.local\r\n/);
+    assert.match(ics, /DTSTART;VALUE=DATE:20260803\r\n/);
+    assert.match(ics, /DTEND;VALUE=DATE:20260806\r\n/);
+    assert.match(ics, /SUMMARY:Summer\\, family\\\\ntrip\\; 2026\r\n/);
+    assert.equal(ics.includes('\n') && !ics.includes('\r\n'), false);
+    assert.equal(PTOTransfer.toICS([vacation], { timestamp: '2026-01-02T03:04:05Z' }), ics);
+    assert.deepEqual(PTOTransfer.parseICS(ics)[0], {
+        source: 'ICS event 1',
+        name: vacation.name,
+        start_date: vacation.start_date,
+        end_date_exclusive: '2026-08-06',
+        end_date: vacation.end_date,
+        days: null,
+        hours: null
+    });
+});
+
+test('parses CSV quoting and rejects timed ICS events during validation', () => {
+    const csv = PTOTransfer.toCSV([{
+        name: 'Team, retreat',
+        start_date: '2026-09-01',
+        end_date: '2026-09-02',
+        days: 2,
+        hours: 0
+    }]);
+    assert.deepEqual(PTOTransfer.parseCSV(csv)[0], {
+        source: 'CSV row 2',
+        name: 'Team, retreat',
+        start_date: '2026-09-01',
+        end_date: '2026-09-02',
+        days: '2',
+        hours: '0'
+    });
+    const timed = PTOTransfer.parseICS([
+        'BEGIN:VCALENDAR',
+        'BEGIN:VEVENT',
+        'SUMMARY:Timed',
+        'DTSTART:20260901T090000Z',
+        'DTEND:20260901T170000Z',
+        'END:VEVENT',
+        'END:VCALENDAR'
+    ].join('\r\n'));
+    const result = PTOTransfer.validateRows(timed, { pto: PTO, config });
+    assert.equal(result.valid.length, 0);
+    assert.match(result.invalid[0].errors.join(' '), /timed events are not supported/i);
+});
+
+test('detects duplicate and overlapping imported vacations before writing', () => {
+    const rows = PTOTransfer.parseCSV([
+        'Name,Start Date,End Date,Days,Hours',
+        'Existing,2026-08-03,2026-08-03,1,0',
+        'New,2026-08-03,2026-08-04,2,0',
+        'Broken,2026-13-01,2026-08-04,1,0'
+    ].join('\r\n'));
+    const result = PTOTransfer.validateRows(rows, {
+        pto: PTO,
+        config,
+        existingVacations: [{
+            id: 1,
+            name: 'Existing',
+            start_date: '2026-08-03',
+            end_date: '2026-08-03',
+            days: 1,
+            hours: 0
+        }]
+    });
+    assert.equal(result.valid.length, 0);
+    assert.equal(result.duplicateCount, 1);
+    assert.match(result.invalid[1].errors.join(' '), /overlap/i);
+    assert.match(result.invalid[2].errors.join(' '), /YYYY-MM-DD/);
 });
 
 test('calculates holidays, business days, and accrual', () => {

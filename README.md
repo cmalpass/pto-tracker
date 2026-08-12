@@ -12,7 +12,8 @@ server-side database, sync, or authentication features.
 - Configurable accrual policy and IANA timezone
 - IndexedDB persistence with a localStorage fallback
 - Safe soft-delete with undo and retained client-side change history
-- Versioned JSON backup/restore plus client-side CSV and Excel-compatible exports
+- Versioned JSON backup/restore plus client-side CSV, ICS, and Excel-compatible exports
+- Browser-local CSV/ICS vacation import with validation, duplicate detection, and confirmation preview
 
 ## Architecture
 
@@ -31,6 +32,11 @@ icons are created from fixed element definitions.
 Dates are stored and exported as canonical `YYYY-MM-DD` strings. The configured IANA
 timezone controls the browser-local current date and year boundaries without converting
 stored date values.
+
+ICS vacation exports use all-day `VALUE=DATE` events and stable UIDs. Calendar exchange
+and CSV import happen entirely in the browser; there is no subscription URL, sync service,
+authentication, or external calendar API. JSON backup/restore remains a separate full-data
+operation.
 
 **Backup note:** browser profile storage is device-specific and can be lost when site
 data is cleared or evicted. Use Export JSON regularly, especially before clearing

@@ -528,6 +528,13 @@ body {
     gap: 0.35rem;
 }
 
+.vacation-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
 .vacation-edit,
 .vacation-delete {
     background: none;
@@ -1090,6 +1097,78 @@ body {
 
 .policy-wizard #btn-apply-policy {
     margin-top: 0.75rem;
+}
+
+.import-modal {
+    max-width: 860px;
+}
+
+.import-summary {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+}
+
+.import-errors {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    border-left: 4px solid var(--danger);
+    border-radius: var(--radius-sm);
+    background: rgba(239, 68, 68, 0.08);
+    color: var(--danger);
+}
+
+.import-preview-container {
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.import-preview-table {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+}
+
+.import-preview-table th,
+.import-preview-table td {
+    padding: 0.65rem 0.75rem;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--border);
+}
+
+.import-preview-table th {
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.import-preview-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.import-preview-table .import-valid {
+    color: var(--success);
+}
+
+.import-preview-table .import-invalid {
+    color: var(--danger);
+}
+
+.import-preview-table .import-warning {
+    color: var(--warning);
+}
+
+.import-row-detail {
+    color: var(--text-muted);
+    font-size: 0.82rem;
 }
 
 /* Toast Notifications */
@@ -1720,6 +1799,16 @@ textarea {
         flex-wrap: wrap;
         gap: 0.75rem;
         padding: 0.85rem;
+    }
+
+    .vacation-card-actions {
+        width: 100%;
+        justify-content: stretch;
+    }
+
+    .vacation-card-actions .btn {
+        flex: 1 1 8rem;
+        justify-content: center;
     }
 
     .vacation-info {
