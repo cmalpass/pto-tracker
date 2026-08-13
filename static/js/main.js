@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260812-5';
+} from './modules/state.js?v=20260812-7';
 import {
     announce,
     closeDialog,
@@ -15,7 +15,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260812-5';
+} from './modules/dom.js?v=20260812-7';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -26,28 +26,32 @@ import {
     renderVacationWarnings as renderVacationWarningsDom,
     renderNotifications as renderNotificationsDom,
     renderDashboardNotification as renderDashboardNotificationDom,
+    renderVacationScenarioPreview as renderVacationScenarioPreviewDom,
     renderStoredNotes as renderStoredNotesDom,
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
-    renderForecastTable as renderForecastTableDom
-} from './modules/rendering.js?v=20260812-5';
+    renderForecastTable as renderForecastTableDom,
+    renderYearAtAGlance as renderYearAtAGlanceDom,
+    renderForecastPeriodDetail as renderForecastPeriodDetailDom
+} from './modules/rendering.js?v=20260812-7';
 import {
     dismissNotification,
     generateNotifications,
     visibleNotifications
-} from './modules/notifications.js?v=20260812-5';
+} from './modules/notifications.js?v=20260812-7';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260812-5';
-import { generateSuggestions } from './modules/suggestions.js?v=20260812-5';
-import { configWarnings } from './modules/settings.js?v=20260812-5';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-5';
+} from './modules/calendar.js?v=20260812-7';
+import { generateSuggestions } from './modules/suggestions.js?v=20260812-7';
+import { configWarnings } from './modules/settings.js?v=20260812-7';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-7';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260812-5';
+} from './modules/forecast.js?v=20260812-7';
+import { yearAtAGlance as yearAtAGlanceFor } from './modules/planning.js?v=20260812-7';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -97,6 +101,8 @@ export function startApplication() {
         setupVacationModal();
         setupVacationList();
         setupCalendar();
+        setupPlanningView();
+        setupForecastPeriodDetails();
         await setupNotes();
         setupDataTransfer();
         await loadDashboard();
@@ -173,6 +179,8 @@ async function loadDashboard() {
         state.today = config.current_date;
         state.currentYear = config.current_year;
         state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
+        const planningYear = document.getElementById('planning-year');
+        if (planningYear) planningYear.value = String(state.currentYear);
         refreshNotifications();
         await loadForecast();
         const now = parseIsoDateToLocal(state.today);
@@ -208,6 +216,7 @@ async function loadDashboard() {
         document.getElementById('stat-scheduled-pto').textContent = Number(scheduledPtoDays).toFixed(1);
         document.getElementById('stat-remaining-days').textContent = daysRemainingThisYear();
         renderTypeBreakdownDom(typeBreakdown, config.pto_accrual_type === 'hours' ? 'hours' : 'days');
+        renderYearAtAGlance();
         document.getElementById('accrual-per-period').textContent = `${config.pto_accrual_per_pay_period} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
         document.getElementById('pay-periods').textContent = config.pay_periods_per_year;
         const annual = (config.pto_accrual_per_pay_period * config.pay_periods_per_year);
@@ -314,6 +323,41 @@ function renderMiniCalendar() {
     const month = now.getMonth();
     const events = state.calendarEvents[`${year}-${month}`] || [];
     renderMiniCalendarDom(now, events);
+}
+
+function renderYearAtAGlance() {
+    const select = document.getElementById('planning-year');
+    const year = Number(select?.value || state.currentYear);
+    try {
+        state.yearAtAGlance = yearAtAGlanceFor(year, state.config, state.vacations);
+        renderYearAtAGlanceDom(state.yearAtAGlance);
+    } catch (err) {
+        console.error('Failed to render year at a glance:', err);
+        showToast('Failed to render year planning view', 'error');
+    }
+}
+
+function setupPlanningView() {
+    const select = document.getElementById('planning-year');
+    const container = document.getElementById('year-at-a-glance');
+    if (!select || !container) return;
+    select.addEventListener('change', renderYearAtAGlance);
+    container.addEventListener('click', event => {
+        const button = event.target.closest('[data-planning-month]');
+        if (!button) return;
+        state.currentYear = Number(button.dataset.planningYear);
+        state.currentMonth = Number(button.dataset.planningMonth);
+        document.querySelector('.nav-tab[data-tab="calendar"]')?.click();
+    });
+}
+
+function setupForecastPeriodDetails() {
+    const table = document.getElementById('forecast-table');
+    table?.addEventListener('click', event => {
+        const button = event.target.closest('[data-forecast-index]');
+        if (!button) return;
+        renderForecastPeriodDetail(Number(button.dataset.forecastIndex));
+    });
 }
 
 function setupCalendar() {
@@ -488,6 +532,7 @@ function openCreateVacationModal(prefillDate = null) {
     document.getElementById('vacation-days').value = 0;
     document.getElementById('vacation-hours').value = 0;
     calcVacationDays();
+    scheduleVacationAnalysis();
     openDialog(document.getElementById('vacation-modal'), '#vacation-name');
 }
 
@@ -507,6 +552,7 @@ function editVacation(id) {
     document.getElementById('vacation-auto-days').checked = vacation.auto_days !== false
         && (vacation.days || 0) > 0;
     calcVacationDays();
+    scheduleVacationAnalysis();
     openDialog(document.getElementById('vacation-modal'), '#vacation-name');
 }
 
@@ -667,6 +713,7 @@ async function analyzeVacation() {
     const end = form.end_date.value;
     if (!start || !end || end < start) {
         renderVacationWarnings([]);
+        renderVacationScenarioPreviewDom(null);
         return;
     }
     const requestId = ++state.vacationAnalysisRequestId;
@@ -674,11 +721,17 @@ async function analyzeVacation() {
         const result = PTO.analyzeVacation(
             start, end, Number(form.days.value) || 0, Number(form.hours.value) || 0,
             state.config, state.vacations, state.editingVacationId);
-        if (requestId === state.vacationAnalysisRequestId) renderVacationWarnings(result.warnings, result.hints);
+        if (requestId === state.vacationAnalysisRequestId) {
+            renderVacationWarnings(result.warnings, result.hints);
+            renderVacationScenarioPreviewDom(result);
+        }
     } catch (err) {
-        if (requestId === state.vacationAnalysisRequestId) renderVacationWarnings([{
-            severity: 'error', message: err.message || 'Unable to analyze this vacation.'
-        }]);
+        if (requestId === state.vacationAnalysisRequestId) {
+            renderVacationWarnings([{
+                severity: 'error', message: err.message || 'Unable to analyze this vacation.'
+            }]);
+            renderVacationScenarioPreviewDom(null);
+        }
     }
 }
 
@@ -757,6 +810,7 @@ function closeVacationModal() {
     closeDialog(document.getElementById('vacation-modal'));
     document.getElementById('vacation-form').reset();
     document.getElementById('vacation-preview').classList.remove('active');
+    renderVacationScenarioPreviewDom(null);
     state.editingVacationId = null;
     document.getElementById('vacation-modal-title').textContent = 'Add Vacation';
     document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
@@ -1197,6 +1251,9 @@ async function loadForecast() {
         };
         if (requestId !== state.forecastRequestId) return;
         state.forecast = data.forecast || [];
+        state.forecastSummary = multiYearForecastFor(
+            state.currentYear, 1, state.config, state.vacations
+        )[0] || null;
         try {
             renderForecastChart();
         } catch (chartErr) {
@@ -1204,6 +1261,7 @@ async function loadForecast() {
             showToast('Failed to render forecast chart', 'error');
         }
         renderForecastTable();
+        renderForecastPeriodDetail(state.currentMonth < state.forecast.length ? state.currentMonth : 0);
         await loadMultiYearForecast();
     } catch (err) {
         console.error('Failed to load forecast:', err);
@@ -1330,6 +1388,12 @@ function renderForecastChart() {
     const accrued = state.forecast.map(f => f.accrued);
     const used = state.forecast.map(f => f.used);
     const balance = state.forecast.map(f => f.balance);
+    const limits = state.forecast.map(f => f.limit);
+    const forfeited = state.forecast.map((_, index) =>
+        index === state.forecast.length - 1 && Number(state.forecastSummary?.forfeited || 0) > 0
+            ? Number(state.forecastSummary.forfeited)
+            : null);
+    const unit = state.config.pto_accrual_type === 'hours' ? 'hours' : 'days';
     state.forecastChart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -1337,7 +1401,9 @@ function renderForecastChart() {
             datasets: [
                 { label: 'Accrued', data: accrued, backgroundColor: 'rgba(99, 102, 241, 0.7)', borderColor: 'rgba(99, 102, 241, 1)', borderWidth: 1, borderRadius: 4, order: 2 },
                 { label: 'Used', data: used, backgroundColor: 'rgba(239, 68, 68, 0.7)', borderColor: 'rgba(239, 68, 68, 1)', borderWidth: 1, borderRadius: 4, order: 2 },
-                { label: 'Balance', data: balance, type: 'line', borderColor: 'rgba(16, 185, 129, 1)', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderWidth: 3, pointBackgroundColor: 'rgba(16, 185, 129, 1)', pointRadius: 5, fill: true, tension: 0.3, order: 1 }
+                { label: 'Balance', data: balance, type: 'line', borderColor: 'rgba(16, 185, 129, 1)', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderWidth: 3, pointBackgroundColor: 'rgba(16, 185, 129, 1)', pointRadius: 5, fill: true, tension: 0.3, order: 1 },
+                { label: 'Policy cap', data: limits, type: 'line', borderColor: 'rgba(161, 98, 7, 1)', borderDash: [6, 4], borderWidth: 2, pointRadius: 0, fill: false, order: 0 },
+                { label: 'Forfeiture risk', data: forfeited, type: 'line', borderColor: 'rgba(185, 28, 28, 1)', backgroundColor: 'rgba(185, 28, 28, 1)', pointStyle: 'triangle', pointRadius: 7, showLine: false, order: 0 }
             ]
         },
         options: {
@@ -1346,16 +1412,33 @@ function renderForecastChart() {
             interaction: { intersect: false, mode: 'index' },
             plugins: {
                 legend: { position: 'top', labels: { usePointStyle: true, padding: 20, font: { family: 'Inter', size: 12 } } },
-                tooltip: { backgroundColor: 'rgba(17, 24, 39, 0.9)', titleFont: { family: 'Inter', size: 13 }, bodyFont: { family: 'Inter', size: 12 }, padding: 12, cornerRadius: 8, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` } }
+                tooltip: { backgroundColor: 'rgba(17, 24, 39, 0.9)', titleFont: { family: 'Inter', size: 13 }, bodyFont: { family: 'Inter', size: 12 }, padding: 12, cornerRadius: 8, callbacks: { label: (ctx) => ctx.parsed.y == null ? '' : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} ${unit}` } }
             },
             scales: {
                 x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 12 }, color: '#6b7280' } },
-                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: 'Inter', size: 12 }, color: '#6b7280', callback: (v) => v + ' days' } }
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: 'Inter', size: 12 }, color: '#6b7280', callback: (v) => `${v} ${unit}` } }
+            },
+            onClick: (_event, elements) => {
+                if (elements?.length) renderForecastPeriodDetail(elements[0].index);
             }
         }
     });
 }
 
 function renderForecastTable() {
-    renderForecastTableDom(state.forecast);
+    renderForecastTableDom(state.forecast, state.forecastSummary);
+}
+
+function renderForecastPeriodDetail(index) {
+    const entry = state.forecast[index];
+    if (!entry) return;
+    let planning = state.yearAtAGlance;
+    if (!planning || planning.year !== state.currentYear) {
+        planning = yearAtAGlanceFor(state.currentYear, state.config, state.vacations);
+    }
+    renderForecastPeriodDetailDom(
+        entry,
+        planning.months[index],
+        state.config.pto_accrual_type === 'hours' ? 'hours' : 'days'
+    );
 }

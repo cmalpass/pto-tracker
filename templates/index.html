@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PTO Tracker</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260812-6">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260812-7">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -202,6 +202,26 @@
                         </div>
                         <div class="month-mini-calendar" id="mini-calendar"></div>
                     </div>
+
+                    <div class="card planning-card">
+                        <div class="card-header">
+                            <div>
+                                <h2>Year at a Glance</h2>
+                                <p class="section-hint">Booked leave, holidays, accrual milestones, and policy risk in one planning view.</p>
+                            </div>
+                            <label class="planning-year-control" for="planning-year">
+                                Year
+                                <select id="planning-year" class="form-select">
+                                    <option value="2025">2025</option>
+                                    <option value="2026" selected>2026</option>
+                                    <option value="2027">2027</option>
+                                    <option value="2028">2028</option>
+                                </select>
+                            </label>
+                        </div>
+                        <p id="year-at-a-glance-summary" class="planning-summary" role="status"></p>
+                        <div id="year-at-a-glance" class="year-at-a-glance" aria-live="polite"></div>
+                    </div>
                 </div>
             </div>
 
@@ -326,6 +346,7 @@
                     <div class="chart-container">
                         <canvas id="forecast-chart"></canvas>
                     </div>
+                    <section id="forecast-period-detail" class="forecast-period-detail" aria-live="polite" hidden></section>
                 </div>
                 <div class="card multi-year-card">
                     <div class="card-header">
@@ -376,6 +397,7 @@
                                     <th>Used</th>
                                     <th>Balance</th>
                                     <th>Limit</th>
+                                    <th>Policy note</th>
                                 </tr>
                             </thead>
                             <tbody id="forecast-tbody"></tbody>
@@ -550,6 +572,8 @@
                         </div>
                         <p class="form-help">For a half-day, turn off the date-range option and enter half a day or the matching hours for your policy.</p>
                         <div class="vacation-preview" id="vacation-preview"></div>
+                        <section class="scenario-preview" id="vacation-scenario-preview"
+                                 aria-live="polite" aria-atomic="true" hidden></section>
                         <div class="form-actions">
                             <button type="button" class="btn btn-secondary" id="btn-cancel-vacation">Cancel</button>
                             <button type="submit" class="btn btn-primary" id="btn-submit-vacation">Add Vacation</button>
@@ -601,9 +625,9 @@
     <div id="announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
 
-    <script src="/static/js/store.js?v=20260812-6"></script>
-    <script src="/static/js/pto.js?v=20260812-6"></script>
-    <script src="/static/js/transfer.js?v=20260812-6"></script>
-    <script type="module" src="/static/js/app.js?v=20260812-6"></script>
+    <script src="/static/js/store.js?v=20260812-7"></script>
+    <script src="/static/js/pto.js?v=20260812-7"></script>
+    <script src="/static/js/transfer.js?v=20260812-7"></script>
+    <script type="module" src="/static/js/app.js?v=20260812-7"></script>
 </body>
 </html>

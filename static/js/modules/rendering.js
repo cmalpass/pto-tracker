@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260812-5';
-import { clearElement, element, appendText } from './dom.js?v=20260812-5';
+import { DAYS, MONTHS, state } from './state.js?v=20260812-7';
+import { clearElement, element, appendText } from './dom.js?v=20260812-7';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -442,6 +442,45 @@ export function renderVacationWarnings(warnings = [], hints = []) {
     });
 }
 
+export function renderVacationScenarioPreview(result) {
+    const container = document.getElementById('vacation-scenario-preview');
+    if (!container) return;
+    clearElement(container);
+    if (!result) {
+        container.hidden = true;
+        container.removeAttribute('data-state');
+        return;
+    }
+    const unit = result.unit || 'days';
+    const stateLabel = result.warnings?.some(item => item.severity === 'error')
+        ? 'blocked' : result.forfeit_delta > 0 ? 'risk' : 'ready';
+    container.hidden = false;
+    container.dataset.state = stateLabel;
+    appendText(container, 'h3', '', 'What-if preview');
+    appendText(container, 'p', 'scenario-summary',
+        `Projected balance after saving: ${Number(result.balance_after || 0).toFixed(2)} ${unit}.`);
+    const metrics = element('div', 'scenario-metrics');
+    [
+        ['Balance before', result.balance_before],
+        ['Balance after', result.balance_after],
+        ['Year-end balance after', result.year_end_balance_after],
+        ['Policy cap', result.limit]
+    ].forEach(([label, value]) => {
+        const metric = element('div', 'scenario-metric');
+        appendText(metric, 'span', '', label);
+        appendText(metric, 'strong', '', `${Number(value || 0).toFixed(2)} ${unit}`);
+        metrics.append(metric);
+    });
+    container.append(metrics);
+    const forfeitDelta = Number(result.forfeit_delta || 0);
+    const forfeitureMessage = forfeitDelta > 0
+        ? `Forfeiture risk increases by ${forfeitDelta.toFixed(2)} ${unit}.`
+        : forfeitDelta < 0
+            ? `Forfeiture risk decreases by ${Math.abs(forfeitDelta).toFixed(2)} ${unit}.`
+            : `No change to year-end forfeiture risk (${Number(result.forfeit_after || 0).toFixed(2)} ${unit}).`;
+    appendText(container, 'p', `scenario-note ${forfeitDelta > 0 ? 'risk' : 'safe'}`, forfeitureMessage);
+}
+
 function renderNotificationContent(alert, includeDismiss = true) {
     const item = element('article', `notification-item ${alert.severity || 'info'}`);
     item.dataset.fingerprint = alert.fingerprint;
@@ -597,18 +636,113 @@ export function renderHeatmap(data) {
         'Color intensity shows days off per PTO day; stripes indicate an already booked week.');
 }
 
-export function renderForecastTable(forecast) {
+export function renderForecastTable(forecast, summary = null) {
     const tbody = document.getElementById('forecast-tbody');
     if (!tbody) return;
     clearElement(tbody);
-    forecast.forEach(item => {
+    forecast.forEach((item, index) => {
         const row = element('tr');
-        appendText(row, 'td', '', item.month_name);
+        row.dataset.forecastMonth = item.month;
+        const monthCell = element('td');
+        const monthButton = appendText(monthCell, 'button', 'forecast-period-button', item.month_name);
+        monthButton.type = 'button';
+        monthButton.dataset.forecastIndex = index;
+        monthButton.setAttribute('aria-label', `Show ${item.month_name} forecast details`);
+        row.append(monthCell);
         appendText(row, 'td', '', item.accrued.toFixed(1));
         appendText(row, 'td', '', item.used.toFixed(1));
         appendText(row, 'td', item.balance >= 0 ? 'balance-positive' : 'balance-negative', item.balance.toFixed(1));
         appendText(row, 'td', '', item.limit.toFixed(1));
-        row.firstElementChild.firstChild?.replaceWith(element('strong', '', item.month_name));
+        const policy = [];
+        if (item.limit > 0 && item.balance >= item.limit - 1e-9) policy.push('At cap');
+        if (index === forecast.length - 1 && Number(summary?.forfeited || 0) > 0) {
+            policy.push(`${Number(summary.forfeited).toFixed(1)} at risk`);
+        }
+        appendText(row, 'td', 'forecast-policy-note', policy.join('; ') || 'Within cap');
         tbody.append(row);
     });
+}
+
+export function renderYearAtAGlance(data) {
+    const container = document.getElementById('year-at-a-glance');
+    const summary = document.getElementById('year-at-a-glance-summary');
+    if (!container || !summary) return;
+    clearElement(container);
+    const unit = data.unit || 'days';
+    summary.textContent = `${data.year}: ${Number(data.year_end_balance || 0).toFixed(1)} ${unit} year-end balance, `
+        + `${Number(data.year_end_forfeited || 0).toFixed(1)} ${unit} at risk of forfeiture.`;
+    data.months.forEach(month => {
+        const card = element('article', 'planning-month');
+        const heading = element('div', 'planning-month-header');
+        const button = appendText(heading, 'button', 'planning-month-link', month.month_name);
+        button.type = 'button';
+        button.dataset.planningYear = data.year;
+        button.dataset.planningMonth = month.month_number - 1;
+        button.setAttribute('aria-label', `Open ${month.month_name} ${data.year} calendar`);
+        appendText(heading, 'span', 'planning-balance',
+            `${Number(month.forecast.balance || 0).toFixed(1)} / ${Number(month.forecast.limit || 0).toFixed(1)} ${unit}`);
+        card.append(heading);
+
+        const annotations = month.annotations || [];
+        if (annotations.length) {
+            const annotationList = element('ul', 'planning-annotations');
+            annotations.forEach(annotation => appendText(annotationList, 'li', `planning-annotation ${annotation.type}`,
+                annotation.label));
+            card.append(annotationList);
+        }
+
+        const events = element('ul', 'planning-events');
+        month.holidays.forEach(item => appendText(events, 'li', 'planning-event holiday-event',
+            `Holiday: ${item.name} (${item.date})`));
+        month.vacations.forEach(item => {
+            const event = appendText(events, 'li', `planning-event leave-type-${item.type}`,
+                `${globalThis.PTO.leaveType(item.type).label}: booked leave (${item.start_date} to ${item.end_date})`);
+            event.title = `${globalThis.PTO.leaveType(item.type).label}: ${item.name}`;
+            event.setAttribute('aria-label',
+                `${globalThis.PTO.leaveType(item.type).label}: ${item.name}, ${item.start_date} to ${item.end_date}`);
+        });
+        month.accrual_milestones.forEach(item => appendText(events, 'li', 'planning-event accrual-event',
+            `Accrual milestone: +${Number(item.amount).toFixed(2)} ${item.unit} on ${item.date}`));
+        if (!events.childElementCount) {
+            appendText(events, 'li', 'planning-event empty', 'No booked leave, holiday, or accrual milestone.');
+        }
+        card.append(events);
+        container.append(card);
+    });
+}
+
+export function renderForecastPeriodDetail(entry, month, unit = 'days') {
+    const container = document.getElementById('forecast-period-detail');
+    if (!container || !entry) return;
+    clearElement(container);
+    container.hidden = false;
+    appendText(container, 'h3', '', `${entry.month_name} forecast details`);
+    appendText(container, 'p', 'forecast-detail-summary',
+        `${Number(entry.balance).toFixed(1)} ${unit} available after ${Number(entry.used).toFixed(1)} ${unit} used.`);
+    const details = element('dl', 'forecast-detail-list');
+    [
+        ['Accrued', `${Number(entry.accrued).toFixed(1)} ${unit}`],
+        ['Used', `${Number(entry.used).toFixed(1)} ${unit}`],
+        ['Balance', `${Number(entry.balance).toFixed(1)} ${unit}`],
+        ['Policy cap', `${Number(entry.limit).toFixed(1)} ${unit}`]
+    ].forEach(([label, value]) => {
+        appendText(details, 'dt', '', label);
+        appendText(details, 'dd', '', value);
+    });
+    container.append(details);
+    const events = element('ul', 'forecast-detail-events');
+    (month?.holidays || []).forEach(item => appendText(events, 'li', '', `Holiday: ${item.name}`));
+    (month?.vacations || []).forEach(item => {
+        const event = appendText(events, 'li', '', `${globalThis.PTO.leaveType(item.type).label}: booked leave`);
+        event.title = `${globalThis.PTO.leaveType(item.type).label}: ${item.name}`;
+        event.setAttribute('aria-label',
+            `${globalThis.PTO.leaveType(item.type).label}: ${item.name}, ${item.start_date} to ${item.end_date}`);
+    });
+    (month?.accrual_milestones || []).forEach(item => appendText(events, 'li', '',
+        `Accrual milestone: +${Number(item.amount).toFixed(2)} ${item.unit} on ${item.date}`));
+    (month?.annotations || []).forEach(item => appendText(events, 'li', `detail-${item.type}`, item.label));
+    if (events.childElementCount) {
+        appendText(container, 'h4', '', 'Planning notes');
+        container.append(events);
+    }
 }

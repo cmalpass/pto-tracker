@@ -1,0 +1,7 @@
+{
+  "name": "pto-tracker-client-tests",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

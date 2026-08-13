@@ -10,16 +10,27 @@ from playwright.async_api import async_playwright
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 
 
-async def new_page(browser):
-    context = await browser.new_context()
-    await context.add_init_script(
-        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
-    )
+async def new_page(browser, viewport=None):
+    context = await browser.new_context(viewport=viewport)
     return context, await context.new_page()
+
+
+async def reset_browser_storage(page):
+    await page.wait_for_function("() => Boolean(window.PTOStore)")
+    await page.evaluate(
+        """async () => {
+            localStorage.clear();
+            for (const store of window.PTOStore.STORES) {
+                await window.PTOStore.clear(store);
+            }
+        }"""
+    )
 
 
 async def open_app(page):
     await page.goto(BASE_URL)
+    await reset_browser_storage(page)
+    await page.reload()
     await page.wait_for_selector("#current-balance")
     await page.wait_for_function("() => Boolean(window.PTOStore && window.PTO)")
 
@@ -33,6 +44,42 @@ async def test_dashboard_and_forecast(browser):
         await page.click("button:has-text('Forecast')")
         await page.wait_for_selector(".forecast-table tbody tr")
         assert await page.locator(".forecast-table tbody tr").count() == 12
+    finally:
+        await context.close()
+
+
+async def test_year_at_a_glance_and_forecast_period_detail(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.wait_for_selector("#year-at-a-glance .planning-month")
+        assert await page.locator("#year-at-a-glance .planning-month").count() == 12
+        assert await page.locator("#year-at-a-glance").get_by_text("Accrual milestone").count() > 0
+        await page.click("button:has-text('Forecast')")
+        await page.wait_for_selector(".forecast-table tbody tr")
+        await page.locator(".forecast-period-button").first.click()
+        detail = page.locator("#forecast-period-detail")
+        assert await detail.is_visible()
+        assert "forecast details" in (await detail.inner_text()).lower()
+    finally:
+        await context.close()
+
+
+async def test_vacation_what_if_preview_uses_analysis_state(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("button:has-text('Vacations')")
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "What-if Trip")
+        await page.fill("input[name='start_date']", "2026-12-01")
+        await page.fill("input[name='end_date']", "2026-12-01")
+        preview = page.locator("#vacation-scenario-preview")
+        await page.wait_for_function(
+            "() => !document.querySelector('#vacation-scenario-preview').hidden"
+        )
+        assert "Projected balance after saving" in await preview.inner_text()
+        assert await preview.get_attribute("data-state") in {"ready", "risk", "blocked"}
     finally:
         await context.close()
 
@@ -422,11 +469,9 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
 
 
 async def test_mobile_layout_and_touch_targets(browser):
-    context = await browser.new_context(viewport={"width": 320, "height": 844})
-    await context.add_init_script(
-        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
+    context, page = await new_page(
+        browser, viewport={"width": 320, "height": 844}
     )
-    page = await context.new_page()
     try:
         await open_app(page)
         nav = page.locator("#pto-tabs")
@@ -501,6 +546,8 @@ async def main():
         browser = await playwright.chromium.launch()
         tests = [
             test_dashboard_and_forecast,
+            test_year_at_a_glance_and_forecast_period_detail,
+            test_vacation_what_if_preview_uses_analysis_state,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,
