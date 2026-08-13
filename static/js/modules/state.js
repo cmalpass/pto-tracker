@@ -59,6 +59,42 @@ export const POLICY_PRESETS = Object.freeze({
     }
 });
 
+const DEFAULT_SUGGESTION_FILTERS = Object.freeze({ categories: [], sortBy: 'impact' });
+
+function loadSuggestionFilters() {
+    try {
+        const raw = globalThis.localStorage?.getItem('pto-suggestion-filters');
+        if (!raw) return { ...DEFAULT_SUGGESTION_FILTERS };
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new TypeError('Suggestion filters must be an object');
+        }
+        const numeric = key => {
+            if (parsed[key] == null || parsed[key] === '') return null;
+            const value = Number(parsed[key]);
+            return Number.isFinite(value) ? value : null;
+        };
+        return {
+            minPto: numeric('minPto'),
+            maxPto: numeric('maxPto'),
+            minImpact: numeric('minImpact'),
+            monthStart: numeric('monthStart'),
+            monthEnd: numeric('monthEnd'),
+            categories: Array.isArray(parsed.categories)
+                ? parsed.categories.filter(category => typeof category === 'string') : [],
+            sortBy: ['impact', 'date', 'pto_days'].includes(parsed.sortBy)
+                ? parsed.sortBy : 'impact'
+        };
+    } catch (_) {
+        try {
+            globalThis.localStorage?.removeItem('pto-suggestion-filters');
+        } catch (_) {
+            // A broken preference must never prevent application startup.
+        }
+        return { ...DEFAULT_SUGGESTION_FILTERS };
+    }
+}
+
 export const state = {
     config: {},
     vacations: [],
@@ -75,9 +111,7 @@ export const state = {
     editingVacationId: null,
     vacationCalcRequestId: 0,
     vacationSuggestions: null,
-    suggestionFilters: JSON.parse(
-        localStorage.getItem('pto-suggestion-filters') || '{"categories":[],"sortBy":"impact"}'
-    ),
+    suggestionFilters: loadSuggestionFilters(),
     suggestionAnalysisTimer: null,
     vacationAnalysisRequestId: 0,
     notificationAlerts: [],
