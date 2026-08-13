@@ -1,4 +1,4 @@
-const test = require('node:test');
+const { beforeEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const PTO = require('../static/js/pto.js');
 const PTOStore = require('../static/js/store.js');
@@ -25,6 +25,10 @@ global.localStorage = {
     setItem: (key, value) => localStorageData.set(key, String(value)),
     removeItem: key => localStorageData.delete(key)
 };
+
+beforeEach(() => {
+    localStorageData.clear();
+});
 
 test('validates canonical dates and configured timezone boundaries', () => {
     assert.equal(PTO.isCanonicalDate('2026-02-28'), true);
@@ -340,4 +344,72 @@ test('migrates legacy fallback records and imports schema v1 backups', async () 
    });
    assert.equal((await PTOStore.listVacations())[0].name, 'Old backup');
    assert.equal((await PTOStore.listVacations())[0].type, 'vacation');
+});
+
+test('validates store records and preserves merge import behavior', async () => {
+   await assert.rejects(
+       () => PTOStore.putVacation({
+           name: 'Invalid',
+           start_date: '2026-08-03',
+           end_date: '2026-08-03',
+           days: 1,
+           hours: 0.1
+       }),
+       /0\.25-hour/
+   );
+   await assert.rejects(
+       () => PTOStore.putConfig({ timezone: 'Not/A_Timezone' }),
+       /valid IANA timezone/
+   );
+
+   await PTOStore.putVacation({
+       id: 4,
+       name: 'Existing',
+       start_date: '2026-08-03',
+       end_date: '2026-08-03',
+       days: 1,
+       hours: 0
+   });
+   await PTOStore.importJSON({
+       schemaVersion: 3,
+       data: {
+           config: null,
+           vacations: [{
+               id: 8,
+               name: 'Merged',
+               start_date: '2026-08-04',
+               end_date: '2026-08-04',
+               days: 0,
+               hours: 2
+           }],
+           notes: []
+       }
+   }, { replace: false });
+   assert.deepEqual(
+       (await PTOStore.listVacations()).map(item => item.name),
+       ['Existing', 'Merged']
+   );
+   assert.equal((await PTOStore.listHistory()).filter(item => item.action === 'create').length, 2);
+});
+
+test('keeps fallback storage isolated from deleted records and resets ids on clear', async () => {
+   const vacation = await PTOStore.putVacation({
+       name: 'Deleted',
+       start_date: '2026-08-03',
+       end_date: '2026-08-03',
+       days: 1,
+       hours: 0
+   });
+   await PTOStore.deleteVacation(vacation.id);
+   assert.equal((await PTOStore.listVacations()).length, 0);
+   assert.equal((await PTOStore.list('vacations', { includeDeleted: true })).length, 1);
+   await PTOStore.clear('vacations');
+   const replacement = await PTOStore.putVacation({
+       name: 'Fresh',
+       start_date: '2026-08-04',
+       end_date: '2026-08-04',
+       days: 1,
+       hours: 0
+   });
+   assert.equal(replacement.id, 1);
 });

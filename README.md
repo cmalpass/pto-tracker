@@ -70,23 +70,30 @@ python -c "from app import app; app.run(debug=False, host='127.0.0.1', port=5001
 
 ### Tests
 
-Install Playwright browsers once:
+Install the Python dependencies and Playwright Chromium once:
 
 ```bash
-python -m playwright install
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
-Run the client calculation checks:
+Run all Node client checks (calculation, storage, transfer, notifications, and planning):
 
 ```bash
-node --test tests/client.test.js
+npm test
 ```
 
-With the app running at port 5000, run the browser checks:
+With the app running at port 5000, run the Playwright browser checks:
 
 ```bash
 python tests/test_app.py
 ```
+
+The pull request workflow runs `npm test` without a server or database, then starts
+the Flask static app server only for the Playwright checks. Browser fixtures clear
+both localStorage and IndexedDB between tests, and fixed-date client scenarios use
+canonical UTC dates so timezone and year-boundary behavior stays reproducible.
 
 ## Docker
 

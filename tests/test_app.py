@@ -10,16 +10,27 @@ from playwright.async_api import async_playwright
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 
 
-async def new_page(browser):
-    context = await browser.new_context()
-    await context.add_init_script(
-        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
-    )
+async def new_page(browser, viewport=None):
+    context = await browser.new_context(viewport=viewport)
     return context, await context.new_page()
+
+
+async def reset_browser_storage(page):
+    await page.wait_for_function("() => Boolean(window.PTOStore)")
+    await page.evaluate(
+        """async () => {
+            localStorage.clear();
+            for (const store of window.PTOStore.STORES) {
+                await window.PTOStore.clear(store);
+            }
+        }"""
+    )
 
 
 async def open_app(page):
     await page.goto(BASE_URL)
+    await reset_browser_storage(page)
+    await page.reload()
     await page.wait_for_selector("#current-balance")
     await page.wait_for_function("() => Boolean(window.PTOStore && window.PTO)")
 
@@ -458,11 +469,9 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
 
 
 async def test_mobile_layout_and_touch_targets(browser):
-    context = await browser.new_context(viewport={"width": 320, "height": 844})
-    await context.add_init_script(
-        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
+    context, page = await new_page(
+        browser, viewport={"width": 320, "height": 844}
     )
-    page = await context.new_page()
     try:
         await open_app(page)
         nav = page.locator("#pto-tabs")
