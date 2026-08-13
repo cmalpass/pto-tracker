@@ -28,8 +28,10 @@ import {
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
+    renderForecastAnnotations as renderForecastAnnotationsDom,
+    renderPlanningView as renderPlanningViewDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-2';
+} from './modules/rendering.js?v=20260813-3';
 import {
     dismissNotification,
     generateNotifications,
@@ -99,6 +101,7 @@ export function startApplication() {
         setupVacationModal();
         setupVacationList();
         setupCalendar();
+        setupPlanning();
         await setupNotes();
         setupDataTransfer();
         await loadDashboard();
@@ -131,6 +134,7 @@ function setupTabs() {
         if (tab.dataset.tab === 'calendar') renderCalendar();
         else if (tab.dataset.tab === 'heatmap') loadHeatmap();
         else if (tab.dataset.tab === 'forecast') loadForecast();
+        else if (tab.dataset.tab === 'planning') loadPlanning();
         else if (tab.dataset.tab === 'vacations') loadVacations();
     };
     tabs.forEach(tab => {
@@ -1275,6 +1279,7 @@ async function loadForecast() {
             showToast('Failed to render forecast chart', 'error');
         }
         renderForecastTable();
+        renderForecastAnnotationsDom(state.forecast, state.config, state.vacations);
         await loadMultiYearForecast();
     } catch (err) {
         console.error('Failed to load forecast:', err);
@@ -1429,4 +1434,54 @@ function renderForecastChart() {
 
 function renderForecastTable() {
     renderForecastTableDom(state.forecast);
+}
+
+function loadPlanning() {
+    const select = document.getElementById('planning-year');
+    if (!select) return;
+    const year = Number(select.value || state.currentYear);
+    renderPlanningViewDom(year, state.config, state.vacations);
+    updateWhatIf();
+}
+
+function setupPlanning() {
+    const select = document.getElementById('planning-year');
+    const slider = document.getElementById('what-if-amount');
+    if (!select || !slider || select.dataset.listenerAttached) return;
+    select.dataset.listenerAttached = 'true';
+    select.addEventListener('change', loadPlanning);
+    slider.addEventListener('input', updateWhatIf);
+    document.getElementById('planning-grid')?.addEventListener('click', event => {
+        const month = event.target.closest('[data-planning-month]')?.dataset.planningMonth;
+        if (month == null) return;
+        state.currentYear = Number(select.value);
+        state.currentMonth = Number(month);
+        document.querySelector('.nav-tab[data-tab="calendar"]').click();
+    });
+    document.getElementById('forecast-annotations')?.addEventListener('click', event => {
+        const month = event.target.closest('[data-forecast-month]')?.dataset.forecastMonth;
+        if (!month) return;
+        const [year, monthNumber] = month.split('-').map(Number);
+        state.currentYear = year;
+        state.currentMonth = monthNumber - 1;
+        document.querySelector('.nav-tab[data-tab="calendar"]').click();
+    });
+}
+
+function updateWhatIf() {
+    const slider = document.getElementById('what-if-amount');
+    const amountOutput = document.getElementById('what-if-amount-value');
+    const result = document.getElementById('what-if-result');
+    const unit = document.getElementById('what-if-unit');
+    if (!slider || !amountOutput || !result || !unit || !state.config.pto_accrual_type) return;
+    const amount = Number(slider.value);
+    const unitLabel = state.config.pto_accrual_type === 'hours' ? 'hours' : 'days';
+    const baseline = PTO.calculateBalanceOnDate(
+        `${Number(document.getElementById('planning-year')?.value || state.currentYear)}-12-31`,
+        state.config,
+        state.vacations
+    );
+    unit.textContent = unitLabel;
+    amountOutput.textContent = amount.toFixed(1);
+    result.textContent = `Projected year-end balance: ${Math.max(0, baseline.balance - amount).toFixed(1)} ${unitLabel} (down ${amount.toFixed(1)} ${unitLabel} from ${baseline.balance.toFixed(1)}).`;
 }
