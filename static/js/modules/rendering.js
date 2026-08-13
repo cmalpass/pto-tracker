@@ -158,12 +158,14 @@ export function renderCalendar(year, month, today, monthEvents) {
         ].filter(Boolean);
         cell.setAttribute('aria-label', [dateLabel, ...stateLabels].join('. '));
         cell.title = cell.getAttribute('aria-label');
+        const vacationEvent = dayEvents.find(event => event.type === 'vacation' && event.id);
+        if (vacationEvent) cell.dataset.vacationId = vacationEvent.id;
         appendText(cell, 'span', 'day-number', day);
         dayEvents.slice(0, 2).forEach(event => {
-            const label = event.type === 'holiday'
-                ? String(event.name || '').substring(0, 8)
-                : String(event.name || 'Vacation').substring(0, 10);
-            appendText(cell, 'span', `day-event ${event.type}`, label);
+            const rawName = event.name || (event.type === 'holiday' ? 'Holiday' : 'Vacation');
+            const label = event.type === 'holiday' ? rawName : rawName.substring(0, 10);
+            const eventElement = appendText(cell, 'span', `day-event ${event.type}`, label);
+            eventElement.title = rawName;
         });
         container.append(cell);
     }
