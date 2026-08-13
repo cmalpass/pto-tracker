@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PTO Tracker</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260418-3">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260812-3">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -29,7 +29,7 @@
                             <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
                         </svg>
                     </button>
-                    <button class="btn btn-icon" id="btn-settings" title="Settings">
+                    <button class="btn btn-icon" id="btn-settings" title="Settings" aria-label="Open settings">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"></circle>
                             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -39,8 +39,9 @@
             </div>
         </header>
 
-        <nav class="nav-tabs">
-            <button class="nav-tab active" data-tab="dashboard">
+        <nav class="nav-tabs" id="pto-tabs" role="tablist" aria-label="PTO Tracker sections">
+            <button class="nav-tab active" id="tab-dashboard-tab" role="tab" aria-selected="true"
+                    aria-controls="tab-dashboard" tabindex="0" data-tab="dashboard">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="3" y="3" width="7" height="7"></rect>
                     <rect x="14" y="3" width="7" height="7"></rect>
@@ -49,7 +50,8 @@
                 </svg>
                 Dashboard
             </button>
-            <button class="nav-tab" data-tab="calendar">
+            <button class="nav-tab" id="tab-calendar-tab" role="tab" aria-selected="false"
+                    aria-controls="tab-calendar" tabindex="-1" data-tab="calendar">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                     <line x1="16" y1="2" x2="16" y2="6"></line>
@@ -58,7 +60,8 @@
                 </svg>
                 Calendar
             </button>
-            <button class="nav-tab" data-tab="heatmap">
+            <button class="nav-tab" id="tab-heatmap-tab" role="tab" aria-selected="false"
+                    aria-controls="tab-heatmap" tabindex="-1" data-tab="heatmap">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="3" y="3" width="7" height="7"></rect>
                     <rect x="14" y="3" width="7" height="7"></rect>
@@ -67,13 +70,15 @@
                 </svg>
                 Best Weeks
             </button>
-            <button class="nav-tab" data-tab="vacations">
+            <button class="nav-tab" id="tab-vacations-tab" role="tab" aria-selected="false"
+                    aria-controls="tab-vacations" tabindex="-1" data-tab="vacations">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2.75 2.75 0 0 1-5.46 0"></path>
                 </svg>
                 Vacations
             </button>
-            <button class="nav-tab" data-tab="forecast">
+            <button class="nav-tab" id="tab-forecast-tab" role="tab" aria-selected="false"
+                    aria-controls="tab-forecast" tabindex="-1" data-tab="forecast">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                 </svg>
@@ -82,7 +87,7 @@
         </nav>
 
         <main class="main-content">
-            <div class="tab-content active" id="tab-dashboard">
+            <div class="tab-content active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-dashboard-tab" tabindex="0">
                 <div class="dashboard-grid">
                     <div class="card balance-card">
                         <div class="card-header">
@@ -171,7 +176,7 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-calendar">
+            <div class="tab-content" id="tab-calendar" role="tabpanel" aria-labelledby="tab-calendar-tab" tabindex="0" hidden>
                 <div class="card calendar-card">
                     <div class="card-header">
                         <button class="btn btn-sm" id="cal-prev-month">&lt;</button>
@@ -179,7 +184,7 @@
                         <button class="btn btn-sm" id="cal-next-month">&gt;</button>
                         <button class="btn btn-sm" id="cal-today-btn">Today</button>
                     </div>
-                    <div class="calendar-grid" id="calendar-grid"></div>
+                    <div class="calendar-grid" id="calendar-grid" role="grid" aria-labelledby="calendar-title"></div>
                     <div class="calendar-legend">
                         <span class="legend-item"><span class="legend-color holiday"></span> Holiday</span>
                         <span class="legend-item"><span class="legend-color vacation"></span> Vacation</span>
@@ -188,7 +193,7 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-vacations">
+            <div class="tab-content" id="tab-vacations" role="tabpanel" aria-labelledby="tab-vacations-tab" tabindex="0" hidden>
                 <div class="card vacations-card">
                     <div class="card-header">
                         <h2>Planned Vacations</h2>
@@ -248,12 +253,12 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-heatmap">
+            <div class="tab-content" id="tab-heatmap" role="tabpanel" aria-labelledby="tab-heatmap-tab" tabindex="0" hidden>
                 <div class="card heatmap-card">
                     <div class="card-header">
                         <div>
                             <h2>Best Weeks to Take Off</h2>
-                            <p class="section-hint">Higher scores mean more consecutive days off per PTO day.</p>
+                            <p class="section-hint" id="heatmap-description">Higher scores mean more consecutive days off per PTO day. Darker cells indicate higher scores; striped cells are already booked.</p>
                         </div>
                         <select id="heatmap-year" class="form-select" aria-label="Heatmap year">
                             <option value="2026" selected>2026</option>
@@ -261,12 +266,13 @@
                         </select>
                     </div>
                     <div id="heatmap-state" class="empty-state">Loading best weeks...</div>
-                    <div id="heatmap-grid" class="heatmap-grid" hidden></div>
-                    <div id="heatmap-legend" class="heatmap-legend" hidden></div>
+                    <div id="heatmap-grid" class="heatmap-grid"
+                         aria-describedby="heatmap-description heatmap-legend" hidden></div>
+                    <div id="heatmap-legend" class="heatmap-legend" aria-label="Heatmap color legend" hidden></div>
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-forecast">
+            <div class="tab-content" id="tab-forecast" role="tabpanel" aria-labelledby="tab-forecast-tab" tabindex="0" hidden>
                 <div class="card forecast-card">
                     <div class="card-header">
                         <h2>PTO Balance Forecast</h2>
@@ -343,11 +349,13 @@
             </div>
         </main>
 
-        <div class="modal-overlay" id="settings-modal">
+        <div class="modal-overlay" id="settings-modal" role="dialog" aria-modal="true"
+             aria-labelledby="settings-modal-title" aria-hidden="true" tabindex="-1">
             <div class="modal">
                 <div class="modal-header">
-                    <h2>Settings</h2>
-                    <button class="btn btn-icon modal-close" id="btn-close-settings">&times;</button>
+                    <h2 id="settings-modal-title">Settings</h2>
+                    <button type="button" class="btn btn-icon modal-close" id="btn-close-settings"
+                            aria-label="Close settings">&times;</button>
                 </div>
                 <div class="modal-body">
                     <section class="policy-wizard" aria-labelledby="policy-wizard-title">
@@ -451,11 +459,13 @@
             </div>
         </div>
 
-        <div class="modal-overlay" id="vacation-modal">
+        <div class="modal-overlay" id="vacation-modal" role="dialog" aria-modal="true"
+             aria-labelledby="vacation-modal-title" aria-hidden="true" tabindex="-1">
             <div class="modal">
                 <div class="modal-header">
                     <h2 id="vacation-modal-title">Add Vacation</h2>
-                    <button class="btn btn-icon modal-close" id="btn-close-vacation">&times;</button>
+                    <button type="button" class="btn btn-icon modal-close" id="btn-close-vacation"
+                            aria-label="Close vacation dialog">&times;</button>
                 </div>
                 <div class="modal-body">
                     <form id="vacation-form" class="vacation-form">
@@ -498,11 +508,12 @@
             </div>
         </div>
 
-        <div class="toast" id="toast"></div>
+        <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div id="announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
 
-    <script src="/static/js/store.js?v=20260812-2"></script>
-    <script src="/static/js/pto.js?v=20260812-2"></script>
-    <script type="module" src="/static/js/app.js?v=20260812-2"></script>
+    <script src="/static/js/store.js?v=20260812-3"></script>
+    <script src="/static/js/pto.js?v=20260812-3"></script>
+    <script type="module" src="/static/js/app.js?v=20260812-3"></script>
 </body>
 </html>

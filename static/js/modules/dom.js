@@ -26,6 +26,74 @@ export function setText(selector, value) {
     return node;
 }
 
+const dialogStates = new WeakMap();
+const focusableSelector = [
+    'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+    'select:not([disabled])', 'textarea:not([disabled])',
+    '[contenteditable="true"]', '[tabindex]:not([tabindex="-1"])'
+].join(',');
+
+export function announce(message) {
+    const region = document.getElementById('announcements');
+    if (!region) return;
+    region.textContent = '';
+    region.textContent = String(message ?? '');
+}
+
+export function setupDialog(dialog, onClose) {
+    if (!dialog) return;
+    dialogStates.set(dialog, { onClose, previousFocus: null });
+    dialog.addEventListener('click', event => {
+        if (event.target === dialog) onClose();
+    });
+    dialog.addEventListener('keydown', event => {
+        if (!dialog.classList.contains('active')) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            onClose();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = [...dialog.querySelectorAll(focusableSelector)]
+            .filter(node => !node.hidden && node.getClientRects().length);
+        if (!focusable.length) {
+            event.preventDefault();
+            dialog.focus();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
+}
+
+export function openDialog(dialog, initialFocusSelector) {
+    const state = dialogStates.get(dialog);
+    if (state) state.previousFocus = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    dialog.classList.add('active');
+    dialog.setAttribute('aria-hidden', 'false');
+    const initialFocus = initialFocusSelector ? dialog.querySelector(initialFocusSelector) : null;
+    (initialFocus || dialog).focus({ preventScroll: true });
+}
+
+export function closeDialog(dialog) {
+    const state = dialogStates.get(dialog);
+    dialog.classList.remove('active');
+    dialog.setAttribute('aria-hidden', 'true');
+    if (state?.previousFocus instanceof HTMLElement) {
+        state.previousFocus.focus({ preventScroll: true });
+        state.previousFocus = null;
+    }
+}
+
 export function escapeHtml(value) {
     const node = document.createElement('div');
     node.textContent = String(value ?? '');
@@ -37,6 +105,7 @@ export function showToast(message, type = '') {
     if (!toast) return;
     toast.textContent = String(message ?? '');
     toast.className = `toast show ${type}`;
+    announce(message);
     setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
