@@ -729,9 +729,8 @@
 
     function forfeitAmount(balance, config) {
         const normalized = normalizedConfig(config);
-        const limit = normalized.pto_accrual_type === 'hours'
-            ? normalized.pto_carryover_limit * normalized.pto_hours_per_day
-            : normalized.pto_carryover_limit;
+        // The carryover limit is already expressed in the configured accrual unit.
+        const limit = normalized.pto_carryover_limit;
         if (!normalized.pto_uses_rollover) return Math.max(0, balance);
         if (normalized.pto_lose_above_limit) return Math.max(0, balance - limit);
         return 0;
@@ -1009,9 +1008,8 @@
         const remainingAmount = Math.max(0, endBalance.accrued - endBalance.used);
         const remainingDays = isHours
             ? remainingAmount / normalized.pto_hours_per_day : remainingAmount;
-        const carryLimit = isHours
-            ? normalized.pto_carryover_limit * normalized.pto_hours_per_day
-            : normalized.pto_carryover_limit;
+        // The carryover limit is already expressed in the configured accrual unit.
+        const carryLimit = normalized.pto_carryover_limit;
         const forfeit = !normalized.pto_uses_rollover ? remainingAmount
             : normalized.pto_lose_above_limit ? Math.max(0, remainingAmount - carryLimit) : 0;
         const forfeitDays = isHours ? forfeit / normalized.pto_hours_per_day : forfeit;
