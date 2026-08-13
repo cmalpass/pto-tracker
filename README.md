@@ -11,6 +11,7 @@ server-side database, sync, or authentication features.
 - Accrual, carryover, vesting, holiday, conflict, forecast, suggestion, and heatmap calculations
 - Configurable accrual policy and IANA timezone
 - IndexedDB persistence with a localStorage fallback
+- Safe soft-delete with undo and retained client-side change history
 - Versioned JSON backup/restore plus client-side CSV and Excel-compatible exports
 
 ## Architecture

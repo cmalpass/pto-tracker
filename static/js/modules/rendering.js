@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260812-3';
-import { clearElement, element, appendText } from './dom.js?v=20260812-3';
+import { DAYS, MONTHS, state } from './state.js?v=20260812-4';
+import { clearElement, element, appendText } from './dom.js?v=20260812-4';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -398,9 +398,10 @@ export async function renderStoredNotes() {
         const item = element('div', 'note-item');
         appendText(item, 'strong', '', note.date);
         item.append(document.createTextNode(` ${note.text}`));
-        const button = element('button', 'btn btn-sm');
+        const button = element('button', 'btn btn-sm note-delete');
         button.dataset.localNoteId = note.id;
         button.textContent = 'Delete';
+        button.setAttribute('aria-label', `Delete note from ${note.date}`);
         item.append(button);
         list.append(item);
     });

@@ -1126,6 +1126,19 @@ body {
     background: var(--warning);
 }
 
+.toast-action {
+    margin-left: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    min-height: 44px;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
 .sr-only {
     position: absolute;
     width: 1px;

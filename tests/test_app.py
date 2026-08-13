@@ -53,6 +53,14 @@ async def test_vacation_persists_and_deletes(browser):
         await page.locator(".vacation-delete").click()
         await page.wait_for_timeout(100)
         assert await page.locator("text=Browser Trip").count() == 0
+        assert await page.evaluate(
+            "() => PTOStore.listVacations().then(items => items.length)"
+        ) == 0
+        assert await page.evaluate(
+            "() => PTOStore.list('vacations', {includeDeleted: true}).then(items => items.length)"
+        ) == 1
+        await page.locator(".toast-action").click()
+        await page.wait_for_selector("text=Browser Trip")
     finally:
         await context.close()
 
@@ -66,6 +74,12 @@ async def test_notes_and_json_backup(browser):
         await page.click("#note-form button[type='submit']")
         await page.wait_for_selector("text=Keep a backup")
         assert await page.locator("text=Keep a backup").is_visible()
+        page.once("dialog", lambda dialog: dialog.accept())
+        await page.locator(".note-delete").click()
+        await page.wait_for_timeout(100)
+        assert not await page.locator("text=Keep a backup").is_visible()
+        await page.locator(".toast-action").click()
+        await page.wait_for_selector("text=Keep a backup")
         assert await page.locator("#export-json").is_visible()
         assert await page.locator("#import-json").is_visible()
     finally:

@@ -92,10 +92,82 @@ test('calculates conflicts, balances, forecasts, suggestions, and heatmap', () =
         });
         await PTOStore.putNote({ date: '2026-01-01', text: 'Backup note' });
         const backup = JSON.parse(await PTOStore.exportJSON());
-        assert.equal(backup.schemaVersion, 1);
+        assert.equal(backup.schemaVersion, 2);
         assert.equal(backup.data.vacations.length, 1);
         await PTOStore.importJSON(backup);
         assert.equal((await PTOStore.listNotes())[0].text, 'Backup note');
     });
     assert.equal(Array.isArray(suggestions.suggestions), true);
+});
+
+test('soft deletes records, supports undo, filters active queries, and keeps history', async () => {
+   await PTOStore.clear('vacations');
+   await PTOStore.clear('notes');
+   await PTOStore.clear('history');
+   const vacation = await PTOStore.putVacation({
+       name: 'Undo trip',
+       start_date: '2026-08-03',
+       end_date: '2026-08-03',
+       days: 1,
+       hours: 0
+   });
+   const note = await PTOStore.putNote({ date: '2026-08-03', text: 'Undo note' });
+
+   assert.equal(await PTOStore.deleteVacation(vacation.id), true);
+   assert.equal((await PTOStore.listVacations()).length, 0);
+   assert.equal((await PTOStore.getVacation(vacation.id)), undefined);
+   const deletedVacation = (await PTOStore.list('vacations', { includeDeleted: true }))
+       .find(item => item.id === vacation.id);
+   assert.ok(deletedVacation.deleted_at);
+
+   const backup = JSON.parse(await PTOStore.exportJSON());
+   assert.equal(backup.data.vacations.length, 0);
+
+   assert.equal(await PTOStore.restoreVacation(vacation.id), true);
+   assert.equal((await PTOStore.listVacations())[0].name, 'Undo trip');
+   assert.equal(await PTOStore.deleteNote(note.id), true);
+   assert.equal((await PTOStore.listNotes()).length, 0);
+   assert.equal(await PTOStore.restoreNote(note.id), true);
+   assert.equal((await PTOStore.listNotes())[0].text, 'Undo note');
+
+   const actions = (await PTOStore.listHistory()).map(item => item.action);
+   assert.ok(actions.includes('delete'));
+   assert.ok(actions.includes('restore'));
+});
+
+test('migrates legacy fallback records and imports schema v1 backups', async () => {
+   localStorageData.delete('pto-tracker:data:v2');
+   localStorageData.set('pto-tracker:data:v1', JSON.stringify({
+       config: [],
+       vacations: [{
+           id: 11,
+           name: 'Legacy trip',
+           start_date: '2026-09-01',
+           end_date: '2026-09-01',
+           days: 1,
+           hours: 0
+       }],
+       notes: [],
+       nextId: { vacations: 12, notes: 1 }
+   }));
+   const migrated = await PTOStore.listVacations();
+   assert.equal(migrated[0].deleted_at, null);
+   assert.ok(localStorageData.get('pto-tracker:data:v2'));
+
+   await PTOStore.importJSON({
+       schemaVersion: 1,
+       data: {
+           config: null,
+           vacations: [{
+               id: 12,
+               name: 'Old backup',
+               start_date: '2026-10-01',
+               end_date: '2026-10-01',
+               days: 1,
+               hours: 0
+           }],
+           notes: []
+       }
+   });
+   assert.equal((await PTOStore.listVacations())[0].name, 'Old backup');
 });
