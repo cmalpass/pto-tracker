@@ -192,15 +192,18 @@ export function renderCalendar(year, month, today, monthEvents) {
         ].filter(Boolean);
         cell.setAttribute('aria-label', [dateLabel, ...stateLabels].join('. '));
         cell.title = cell.getAttribute('aria-label');
+        const vacationEvent = dayEvents.find(event => event.type === 'vacation' && event.id);
+        if (vacationEvent) cell.dataset.vacationId = vacationEvent.id;
         appendText(cell, 'span', 'day-number', day);
         dayEvents.slice(0, 2).forEach(event => {
             const typeLabel = event.type === 'holiday'
                 ? 'Holiday' : leaveTypeInfo(event.leave_type).label;
-            const label = `${typeLabel}: ${String(event.name || typeLabel).substring(0, 10)}`;
+            const rawName = event.name || typeLabel;
+            const label = `${typeLabel}: ${String(rawName).substring(0, 10)}`;
             const eventElement = appendText(cell, 'span', `day-event ${event.type}${
                 event.type === 'vacation' ? ` leave-type-${event.leave_type || 'vacation'}` : ''
             }`, label.substring(0, 28));
-            eventElement.title = label;
+            eventElement.title = `${typeLabel}: ${rawName}`;
         });
         container.append(cell);
     }

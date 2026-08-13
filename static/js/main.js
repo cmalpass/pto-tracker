@@ -335,9 +335,23 @@ function setupCalendar() {
     });
 
     // Allow adding PTO directly from a calendar day.
-    document.getElementById('calendar-grid').addEventListener('click', (e) => {
+    document.getElementById('calendar-grid').addEventListener('click', async (e) => {
         const dayEl = e.target.closest('.cal-day[data-date]');
         if (!dayEl) return;
+
+        if (!state.vacations.length) {
+            state.vacations = await PTOStore.listVacations();
+        }
+        let vacationId = Number(dayEl.dataset.vacationId || 0);
+        if (vacationId <= 0) {
+            const clickedDate = dayEl.dataset.date;
+            const match = state.vacations.find(v => v.start_date <= clickedDate && v.end_date >= clickedDate);
+            if (match) vacationId = Number(match.id || 0);
+        }
+        if (vacationId > 0) {
+            editVacation(vacationId);
+            return;
+        }
         openCreateVacationModal(dayEl.dataset.date);
     });
 }
