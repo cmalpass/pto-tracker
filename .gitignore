@@ -9,6 +9,9 @@ instance/
 *.mp4
 *.png
 screenshots/
+!docs/
+!docs/screenshots/
+!docs/screenshots/*.png
 flask.log
 output.json
 node_modules/
