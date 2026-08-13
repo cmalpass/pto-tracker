@@ -464,6 +464,49 @@ async def test_mobile_layout_and_touch_targets(browser):
         await context.close()
 
 
+async def test_mobile_vacation_actions_and_modal_sheet(browser):
+    context = await browser.new_context(viewport={"width": 390, "height": 844})
+    await context.add_init_script(
+        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
+    )
+    page = await context.new_page()
+    try:
+        await open_app(page)
+        await page.click("#tab-vacations-tab")
+        await page.click("#btn-add-vacation")
+        vacation_dialog = page.locator("#vacation-modal")
+        assert await vacation_dialog.is_visible()
+        assert await vacation_dialog.locator(".modal").evaluate(
+            "(node) => node.getBoundingClientRect().height >= window.innerHeight - 1"
+        )
+        await page.fill("input[name='name']", "Mobile Trip")
+        await page.fill("input[name='start_date']", "2026-08-03")
+        await page.fill("input[name='end_date']", "2026-08-05")
+        await page.locator("#vacation-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector(".vacation-item")
+
+        assert await page.locator(".vacation-actions button").evaluate_all(
+            "(nodes) => nodes.every(node => node.getBoundingClientRect().width >= 44 "
+            "&& node.getBoundingClientRect().height >= 44)"
+        )
+        assert await page.locator(".vacation-actions").evaluate(
+            "(node) => getComputedStyle(node).borderLeftStyle != 'none'"
+        )
+
+        dialogs = []
+
+        async def dismiss_dialog(dialog):
+            dialogs.append(dialog.type)
+            await dialog.dismiss()
+
+        page.once("dialog", dismiss_dialog)
+        await page.locator(".vacation-delete").click()
+        assert dialogs == ["confirm"]
+        assert await page.locator(".vacation-item").count() == 1
+    finally:
+        await context.close()
+
+
 async def test_module_loading_and_browser_value_escaping(browser):
     context, page = await new_page(browser)
     try:
@@ -529,6 +572,7 @@ async def main():
             test_settings_stay_local,
             test_accessibility_semantics_and_keyboard_controls,
             test_mobile_layout_and_touch_targets,
+            test_mobile_vacation_actions_and_modal_sheet,
             test_module_loading_and_browser_value_escaping,
         ]
         failures = []
