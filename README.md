@@ -21,6 +21,12 @@ The browser loads `static/js/store.js`, a versioned asynchronous storage wrapper
 Flask. Storage persistence is requested through the browser Storage API when the app
 first loads.
 
+The UI entry point is the native ES module `static/js/app.js`. It coordinates modules
+for browser state, DOM-safe rendering, calendar data, vacations, suggestions, forecasts,
+and settings without a frontend framework or build step. Renderers construct DOM nodes
+and assign user/imported values with `textContent` or safe attributes; intentional SVG
+icons are created from fixed element definitions.
+
 Dates are stored and exported as canonical `YYYY-MM-DD` strings. The configured IANA
 timezone controls the browser-local current date and year boundaries without converting
 stored date values.

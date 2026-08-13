@@ -1,6 +1,7 @@
 """Browser integration tests for the static, browser-native PTO Tracker."""
 
 import asyncio
+import json
 import os
 
 from playwright.async_api import async_playwright
@@ -87,6 +88,48 @@ async def test_settings_stay_local(browser):
         await context.close()
 
 
+async def test_module_loading_and_browser_value_escaping(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        assert await page.locator("script[type='module'][src*='/static/js/app.js']").count() == 1
+        vacation_name = "<img src=x onerror=window.__xss=1> Imported"
+        note_text = "<svg onload=window.__xss=2> private note"
+        payload = {
+            "schemaVersion": 1,
+            "data": {
+                "config": None,
+                "vacations": [{
+                    "id": 7,
+                    "name": vacation_name,
+                    "start_date": "2026-08-03",
+                    "end_date": "2026-08-03",
+                    "days": 1,
+                    "hours": 0,
+                }],
+                "notes": [{"id": 8, "date": "2026-08-03", "text": note_text}],
+            },
+        }
+        await page.click("button:has-text('Forecast')")
+        page.once("dialog", lambda dialog: dialog.accept())
+        await page.click("#import-json")
+        await page.locator("input[type='file']").set_input_files({
+            "name": "unsafe-backup.json",
+            "mimeType": "application/json",
+            "buffer": json.dumps(payload).encode(),
+        })
+        await page.wait_for_selector("#notes-list .note-item")
+        await page.click("button:has-text('Vacations')")
+        await page.wait_for_selector(".vacation-name")
+        assert await page.locator(".vacation-name").text_content() == vacation_name
+        assert await page.locator(".vacation-name img").count() == 0
+        assert await page.locator("#notes-list").text_content() == f"2026-08-03 {note_text}Delete"
+        assert await page.locator("#notes-list img, #notes-list svg").count() == 0
+        assert await page.evaluate("() => !window.__xss")
+    finally:
+        await context.close()
+
+
 async def main():
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
@@ -95,6 +138,7 @@ async def main():
             test_vacation_persists_and_deletes,
             test_notes_and_json_backup,
             test_settings_stay_local,
+            test_module_loading_and_browser_value_escaping,
         ]
         failures = []
         for test in tests:
