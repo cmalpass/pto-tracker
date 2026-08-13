@@ -459,6 +459,12 @@ async def test_module_loading_and_browser_value_escaping(browser):
     try:
         await open_app(page)
         assert await page.locator("script[type='module'][src*='/static/js/app.js']").count() == 1
+        asset_versions = await page.locator(
+            "link[href*='?v='], script[src*='?v=']"
+        ).evaluate_all(
+            "(nodes) => nodes.map(node => new URL(node.href || node.src).searchParams.get('v'))"
+        )
+        assert len(set(asset_versions)) == 1
         vacation_name = "<img src=x onerror=window.__xss=1> Imported"
         note_text = "<svg onload=window.__xss=2> private note"
         payload = {

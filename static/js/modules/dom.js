@@ -95,12 +95,6 @@ export function closeDialog(dialog) {
     }
 }
 
-export function escapeHtml(value) {
-    const node = document.createElement('div');
-    node.textContent = String(value ?? '');
-    return node.innerHTML;
-}
-
 export function showToast(message, type = '', action = null) {
     const toast = document.getElementById('toast');
     if (!toast) return;
