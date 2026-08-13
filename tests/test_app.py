@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import traceback
 
 from playwright.async_api import async_playwright
 
@@ -12,14 +13,33 @@ BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 
 async def new_page(browser):
     context = await browser.new_context()
-    await context.add_init_script(
-        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
-    )
+    await context.add_init_script("localStorage.clear();")
     return context, await context.new_page()
+
+
+async def clear_browser_data(page):
+    await page.evaluate(
+        """async () => {
+            localStorage.clear();
+            if (typeof indexedDB === 'undefined') return;
+            await new Promise(resolve => {
+                const request = indexedDB.deleteDatabase('pto-tracker');
+                request.onsuccess = resolve;
+                request.onerror = resolve;
+                request.onblocked = () => {};
+            });
+        }"""
+    )
+
+
+async def accept_dialog(dialog):
+    await dialog.accept()
 
 
 async def open_app(page):
     await page.goto(BASE_URL)
+    await clear_browser_data(page)
+    await page.reload()
     await page.wait_for_selector("#current-balance")
     await page.wait_for_function("() => Boolean(window.PTOStore && window.PTO)")
 
@@ -300,7 +320,7 @@ async def test_notes_and_json_backup(browser):
         await page.click("#note-form button[type='submit']")
         await page.wait_for_selector("text=Keep a backup")
         assert await page.locator("text=Keep a backup").is_visible()
-        page.once("dialog", lambda dialog: dialog.accept())
+        page.once("dialog", accept_dialog)
         await page.locator(".note-delete").click()
         await page.wait_for_timeout(100)
         assert not await page.locator("text=Keep a backup").is_visible()
@@ -356,12 +376,14 @@ async def test_vacation_calendar_export_and_import_preview(browser):
         assert "1 valid" in await page.locator("#vacation-import-summary").text_content()
         assert "1 duplicate" in await page.locator("#vacation-import-summary").text_content()
         assert await page.locator("#btn-confirm-vacation-import").get_attribute("disabled") is None
-        page.once("dialog", lambda dialog: dialog.accept())
+        page.once("dialog", accept_dialog)
         await page.click("#btn-confirm-vacation-import")
-        await page.wait_for_selector("text=Imported Trip")
-        assert await page.evaluate(
+        await page.wait_for_selector("#vacation-import-modal.active", state="hidden")
+        await page.wait_for_selector("text=1 vacation imported")
+        imported_count = await page.evaluate(
             "() => PTOStore.listVacations().then(items => items.length)"
-        ) == 2
+        )
+        assert imported_count == 2
     finally:
         await context.close()
 
@@ -397,6 +419,7 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
         await page.locator("#cal-prev-month").focus()
         await page.click("#btn-settings")
         settings = page.locator("#settings-modal")
+        await page.wait_for_function("() => document.activeElement?.id === 'policy-preset'")
         assert await settings.get_attribute("role") == "dialog"
         assert await settings.get_attribute("aria-modal") == "true"
         assert await page.locator("#policy-preset").evaluate("(node) => node === document.activeElement")
@@ -443,8 +466,9 @@ async def test_mobile_layout_and_touch_targets(browser):
         assert await page.locator(".cal-day[data-date]").evaluate_all(
             "(nodes) => nodes.every(node => node.getBoundingClientRect().height >= 44)"
         )
-        await page.locator(".cal-day[data-date]").first.click()
+        await page.locator("button.cal-day[data-date]").first.click()
         vacation_dialog = page.locator("#vacation-modal")
+        await page.wait_for_selector("#vacation-modal.active")
         assert await vacation_dialog.is_visible()
         assert await vacation_dialog.locator(".modal").evaluate(
             "(node) => node.getBoundingClientRect().width <= window.innerWidth"
@@ -483,7 +507,7 @@ async def test_module_loading_and_browser_value_escaping(browser):
             },
         }
         await page.click("button:has-text('Forecast')")
-        page.once("dialog", lambda dialog: dialog.accept())
+        page.once("dialog", accept_dialog)
         await page.click("#import-json")
         await page.locator("input[accept='application/json,.json']").set_input_files({
             "name": "unsafe-backup.json",
@@ -529,6 +553,7 @@ async def main():
             except Exception as error:
                 failures.append((test.__name__, error))
                 print(f"FAIL {test.__name__}: {error}")
+                traceback.print_exc()
         await browser.close()
     if failures:
         raise AssertionError(f"{len(failures)} browser test(s) failed")

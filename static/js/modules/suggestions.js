@@ -1,4 +1,4 @@
-import { state } from './state.js?v=20260813-5';
+import { state } from './state.js?v=20260813-6';
 
 export function suggestionOptions() {
     const filters = state.suggestionFilters || {};
