@@ -86,6 +86,60 @@ async def test_notes_and_json_backup(browser):
         await context.close()
 
 
+async def test_vacation_calendar_export_and_import_preview(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.evaluate(
+            """async () => {
+                await PTOStore.putVacation({
+                    name: 'Existing Trip',
+                    start_date: '2026-08-03',
+                    end_date: '2026-08-03',
+                    days: 1,
+                    hours: 0
+                });
+            }"""
+        )
+        await page.click("button:has-text('Vacations')")
+        await page.wait_for_selector("text=Existing Trip")
+
+        async with page.expect_download() as download_info:
+            await page.click("#btn-export-ics")
+        download = await download_info.value
+        assert download.suggested_filename.endswith(".ics")
+        ics_path = await download.path()
+        with open(ics_path, encoding="utf-8") as exported:
+            ics = exported.read()
+        assert "DTSTART;VALUE=DATE:20260803" in ics
+        assert "DTEND;VALUE=DATE:20260804" in ics
+
+        csv = (
+            "Name,Start Date,End Date,Days,Hours\r\n"
+            "Imported Trip,2026-09-01,2026-09-02,2,0\r\n"
+            "Existing Trip,2026-08-03,2026-08-03,1,0\r\n"
+            "Broken Trip,not-a-date,2026-09-03,1,0\r\n"
+        )
+        await page.click("#btn-import-vacations")
+        await page.locator("#vacation-import-file").set_input_files({
+            "name": "vacations.csv",
+            "mimeType": "text/csv",
+            "buffer": csv.encode()
+        })
+        await page.wait_for_selector("#vacation-import-modal.active")
+        assert "1 valid" in await page.locator("#vacation-import-summary").text_content()
+        assert "1 duplicate" in await page.locator("#vacation-import-summary").text_content()
+        assert await page.locator("#btn-confirm-vacation-import").get_attribute("disabled") is None
+        page.once("dialog", lambda dialog: dialog.accept())
+        await page.click("#btn-confirm-vacation-import")
+        await page.wait_for_selector("text=Imported Trip")
+        assert await page.evaluate(
+            "() => PTOStore.listVacations().then(items => items.length)"
+        ) == 2
+    finally:
+        await context.close()
+
+
 async def test_settings_stay_local(browser):
     context, page = await new_page(browser)
     try:
@@ -199,7 +253,7 @@ async def test_module_loading_and_browser_value_escaping(browser):
         await page.click("button:has-text('Forecast')")
         page.once("dialog", lambda dialog: dialog.accept())
         await page.click("#import-json")
-        await page.locator("input[type='file']").set_input_files({
+        await page.locator("input[accept='application/json,.json']").set_input_files({
             "name": "unsafe-backup.json",
             "mimeType": "application/json",
             "buffer": json.dumps(payload).encode(),
@@ -223,6 +277,7 @@ async def main():
             test_dashboard_and_forecast,
             test_vacation_persists_and_deletes,
             test_notes_and_json_backup,
+            test_vacation_calendar_export_and_import_preview,
             test_settings_stay_local,
             test_accessibility_semantics_and_keyboard_controls,
             test_mobile_layout_and_touch_targets,

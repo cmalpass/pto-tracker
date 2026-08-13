@@ -197,7 +197,11 @@
                 <div class="card vacations-card">
                     <div class="card-header">
                         <h2>Planned Vacations</h2>
-                        <button class="btn btn-primary" id="btn-add-vacation">+ Add Vacation</button>
+                        <div class="vacation-card-actions">
+                            <button class="btn btn-secondary" id="btn-export-ics" type="button">Export ICS</button>
+                            <button class="btn btn-secondary" id="btn-import-vacations" type="button">Import CSV/ICS</button>
+                            <button class="btn btn-primary" id="btn-add-vacation" type="button">+ Add Vacation</button>
+                        </div>
                     </div>
                     <div class="vacations-list" id="vacations-list">
                         <div class="empty-state" id="empty-vacations">
@@ -508,12 +512,50 @@
             </div>
         </div>
 
-        <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-        <div id="announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div class="modal-overlay" id="vacation-import-modal" role="dialog" aria-modal="true"
+         aria-labelledby="vacation-import-modal-title" aria-describedby="vacation-import-description"
+         aria-hidden="true" tabindex="-1">
+        <div class="modal import-modal">
+            <div class="modal-header">
+                <h2 id="vacation-import-modal-title">Import Vacations</h2>
+                <button type="button" class="btn btn-icon modal-close" id="btn-close-vacation-import"
+                        aria-label="Close vacation import dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="vacation-import-description" class="setting-description">
+                    Review the browser-local preview before adding valid vacations. Date-only ICS events are supported; timed events are rejected.
+                </p>
+                <div id="vacation-import-summary" class="import-summary" role="status" aria-live="polite"></div>
+                <div id="vacation-import-errors" class="import-errors" role="alert" hidden></div>
+                <div class="import-preview-container">
+                    <table class="import-preview-table" id="vacation-import-preview">
+                        <caption class="sr-only">Vacation import preview</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Status</th>
+                                <th scope="col">Name</th>
+                                <th scope="col">Dates</th>
+                                <th scope="col">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="btn-cancel-vacation-import">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-vacation-import" disabled>Import valid vacations</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
 
     <script src="/static/js/store.js?v=20260812-4"></script>
     <script src="/static/js/pto.js?v=20260812-4"></script>
+    <script src="/static/js/transfer.js?v=20260812-4"></script>
     <script type="module" src="/static/js/app.js?v=20260812-4"></script>
 </body>
 </html>

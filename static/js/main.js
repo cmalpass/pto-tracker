@@ -733,32 +733,168 @@ function setupDataTransfer() {
         download.click();
         URL.revokeObjectURL(url);
     };
-    const escapeCsv = value => {
-        const text = String(value ?? '');
-        return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-    };
-    const exportRows = () => [
-        ['Name', 'Start Date', 'End Date', 'Days', 'Hours'],
-        ...state.vacations.map(v => [v.name, v.start_date, v.end_date, v.days, v.hours])
-    ];
     csvExportLink?.addEventListener('click', event => {
         event.preventDefault();
-        downloadText(
-            exportRows().map(row => row.map(escapeCsv).join(',')).join('\n'),
-            `pto-tracker-${getTodayIsoDate()}.csv`,
-            'text/csv'
-        );
+        downloadText(PTOTransfer.toCSV(state.vacations),
+            `pto-tracker-${getTodayIsoDate()}.csv`, 'text/csv;charset=utf-8');
     });
     excelExportLink?.addEventListener('click', event => {
         event.preventDefault();
         // Excel export intentionally uses fixed table markup; each cell is escaped.
-        const rows = exportRows().map(row => `<tr>${row.map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
+        const rows = [
+            ['Name', 'Start Date', 'End Date', 'Days', 'Hours'],
+            ...state.vacations.map(v => [v.name, v.start_date, v.end_date, v.days, v.hours])
+        ].map(row => `<tr>${row.map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
         downloadText(
             `<table><thead>${rows.split('</tr>')[0]}</tr></thead><tbody>${rows.split('</tr>').slice(1).join('</tr>')}</tbody></table>`,
             `pto-tracker-${getTodayIsoDate()}.xls`,
             'application/vnd.ms-excel'
         );
     });
+    setupVacationExchange(downloadText);
+}
+
+function setupVacationExchange(downloadText) {
+    const exportButton = document.getElementById('btn-export-ics');
+    const importButton = document.getElementById('btn-import-vacations');
+    const fileInput = document.createElement('input');
+    const importModal = document.getElementById('vacation-import-modal');
+    const confirmButton = document.getElementById('btn-confirm-vacation-import');
+    if (!exportButton || !importButton || !fileInput || !importModal || !confirmButton) return;
+
+    fileInput.id = 'vacation-import-file';
+    fileInput.type = 'file';
+    fileInput.accept = '.csv,.ics,text/csv,text/calendar';
+    fileInput.hidden = true;
+    importButton.after(fileInput);
+
+    let preview = null;
+    const closeImport = () => {
+        closeDialog(importModal);
+        fileInput.value = '';
+        preview = null;
+        confirmButton.disabled = true;
+        confirmButton.textContent = 'Import valid vacations';
+        document.querySelector('#vacation-import-preview tbody')?.replaceChildren();
+        const summary = document.getElementById('vacation-import-summary');
+        if (summary) summary.textContent = '';
+        const errors = document.getElementById('vacation-import-errors');
+        if (errors) {
+            errors.textContent = '';
+            errors.hidden = true;
+        }
+    };
+    document.getElementById('btn-close-vacation-import').addEventListener('click', closeImport);
+    document.getElementById('btn-cancel-vacation-import').addEventListener('click', closeImport);
+    setupDialog(importModal, closeImport);
+
+    exportButton.addEventListener('click', () => {
+        try {
+            downloadText(PTOTransfer.toICS(state.vacations), `pto-tracker-vacations-${getTodayIsoDate()}.ics`,
+                'text/calendar;charset=utf-8');
+            showToast('Active vacations exported as ICS', 'success');
+        } catch (error) {
+            showToast(error.message || 'Failed to export vacations', 'error');
+        }
+    });
+    importButton.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        try {
+            const parsed = PTOTransfer.parse(await file.text(), file.name);
+            const existing = await PTOStore.listVacations();
+            preview = PTOTransfer.validateRows(parsed.rows, {
+                existingVacations: existing,
+                config: state.config,
+                pto: globalThis.PTO
+            });
+            renderVacationImportPreview(preview, parsed.format, file.name);
+            importButton.focus({ preventScroll: true });
+            openDialog(importModal, '#btn-cancel-vacation-import');
+        } catch (error) {
+            preview = null;
+            renderVacationImportError(error.message || 'Unable to parse the selected file.');
+            importButton.focus({ preventScroll: true });
+            openDialog(importModal, '#btn-cancel-vacation-import');
+        }
+    });
+    confirmButton.addEventListener('click', async () => {
+        if (!preview?.valid?.length) return;
+        const count = preview.valid.length;
+        if (!window.confirm(`Add ${count} valid vacation${count === 1 ? '' : 's'} to this browser?`)) return;
+        confirmButton.disabled = true;
+        try {
+            for (const vacation of preview.valid) {
+                const { source, errors, duplicate, valid, analysis, ...record } = vacation;
+                await PTOStore.putVacation(record);
+            }
+            closeImport();
+            await refreshViews();
+            showToast(`${count} vacation${count === 1 ? '' : 's'} imported`, 'success');
+        } catch (error) {
+            confirmButton.disabled = false;
+            showToast(error.message || 'Failed to import vacations', 'error');
+        }
+    });
+}
+
+function renderVacationImportError(message) {
+    const summary = document.getElementById('vacation-import-summary');
+    const errors = document.getElementById('vacation-import-errors');
+    const body = document.querySelector('#vacation-import-preview tbody');
+    if (summary) summary.textContent = 'No import preview is available.';
+    if (errors) {
+        errors.textContent = message;
+        errors.hidden = false;
+    }
+    body?.replaceChildren();
+    const button = document.getElementById('btn-confirm-vacation-import');
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Import valid vacations';
+    }
+}
+
+function renderVacationImportPreview(result, format, filename) {
+    const summary = document.getElementById('vacation-import-summary');
+    const errors = document.getElementById('vacation-import-errors');
+    const body = document.querySelector('#vacation-import-preview tbody');
+    const confirmButton = document.getElementById('btn-confirm-vacation-import');
+    if (!summary || !errors || !body || !confirmButton) return;
+    body.replaceChildren();
+    errors.replaceChildren();
+    errors.hidden = result.invalid.length === 0;
+    summary.textContent = `${filename} (${format.toUpperCase()}): ${result.valid.length} valid, `
+        + `${result.invalid.length} skipped, ${result.duplicateCount} duplicate${result.duplicateCount === 1 ? '' : 's'}.`;
+    result.invalid.forEach(row => {
+        const item = document.createElement('div');
+        item.textContent = `${row.source}: ${row.errors.join('; ')}`;
+        errors.append(item);
+    });
+    result.rows.forEach(row => {
+        const tableRow = document.createElement('tr');
+        const status = document.createElement('td');
+        status.className = row.valid ? 'import-valid' : 'import-invalid';
+        status.textContent = row.valid ? 'Ready' : 'Skipped';
+        const name = document.createElement('td');
+        name.textContent = row.name;
+        const dates = document.createElement('td');
+        dates.textContent = `${row.start_date} to ${row.end_date}`;
+        const details = document.createElement('td');
+        details.className = 'import-row-detail';
+        const warnings = row.analysis?.warnings?.filter(item => item.severity !== 'error')
+            .map(item => item.message) || [];
+        details.textContent = row.valid && warnings.length
+            ? warnings.join(' ')
+            : row.errors.join('; ');
+        tableRow.append(status, name, dates, details);
+        body.append(tableRow);
+    });
+    confirmButton.disabled = result.valid.length === 0;
+    confirmButton.textContent = result.valid.length
+        ? `Import ${result.valid.length} valid vacation${result.valid.length === 1 ? '' : 's'}`
+        : 'Import valid vacations';
 }
 
 async function setupNotes() {
