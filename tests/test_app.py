@@ -127,6 +127,39 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
         await context.close()
 
 
+async def test_mobile_layout_and_touch_targets(browser):
+    context = await browser.new_context(viewport={"width": 320, "height": 844})
+    await context.add_init_script(
+        "localStorage.clear(); indexedDB.deleteDatabase('pto-tracker');"
+    )
+    page = await context.new_page()
+    try:
+        await open_app(page)
+        nav = page.locator("#pto-tabs")
+        assert await nav.evaluate("(node) => getComputedStyle(node).position") == "fixed"
+        assert await nav.evaluate(
+            "(node) => node.getBoundingClientRect().bottom >= window.innerHeight - 1"
+        )
+        assert await page.locator(".nav-tab").evaluate_all(
+            "(nodes) => nodes.every(node => node.getBoundingClientRect().height >= 44)"
+        )
+
+        await page.click("#tab-calendar-tab")
+        await page.wait_for_selector(".cal-day[data-date]")
+        assert await page.locator(".cal-day[data-date]").evaluate_all(
+            "(nodes) => nodes.every(node => node.getBoundingClientRect().height >= 44)"
+        )
+        await page.locator(".cal-day[data-date]").first.click()
+        vacation_dialog = page.locator("#vacation-modal")
+        assert await vacation_dialog.is_visible()
+        assert await vacation_dialog.locator(".modal").evaluate(
+            "(node) => node.getBoundingClientRect().width <= window.innerWidth"
+        )
+        await page.keyboard.press("Escape")
+    finally:
+        await context.close()
+
+
 async def test_module_loading_and_browser_value_escaping(browser):
     context, page = await new_page(browser)
     try:
@@ -178,6 +211,7 @@ async def main():
             test_notes_and_json_backup,
             test_settings_stay_local,
             test_accessibility_semantics_and_keyboard_controls,
+            test_mobile_layout_and_touch_targets,
             test_module_loading_and_browser_value_escaping,
         ]
         failures = []

@@ -459,10 +459,6 @@ body {
 .day-event.holiday {
     background: rgba(239, 68, 68, 0.1);
     color: var(--danger);
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    line-height: 1.2;
 }
 
 .day-event.vacation {
@@ -842,105 +838,6 @@ body {
     cursor: pointer;
     font-weight: 600;
     text-decoration: underline;
-}
-
-/* Dashboard polish */
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-}
-
-.stat-card {
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 1rem;
-    text-align: center;
-}
-
-.stat-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--primary);
-}
-
-.stat-label {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    margin-top: 0.25rem;
-}
-
-.rules-list {
-    display: grid;
-    gap: 0.75rem;
-}
-
-.rules-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 0.9rem;
-    border-radius: var(--radius-sm);
-    background: rgba(14, 116, 110, 0.05);
-    border: 1px solid rgba(14, 116, 110, 0.12);
-}
-
-.rules-label {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-.rules-value {
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--text);
-    text-align: right;
-}
-
-.chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.35rem 0.7rem;
-    border-radius: var(--radius-full);
-    background: rgba(14, 116, 110, 0.12);
-    color: var(--primary-dark);
-    font-size: 0.8rem;
-    font-weight: 700;
-}
-
-.form-row {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-}
-
-.form-help {
-    display: block;
-    margin-top: 0.35rem;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    line-height: 1.4;
-}
-
-.vacation-preview {
-    display: none;
-    margin-top: 0.75rem;
-    padding: 0.8rem 1rem;
-    border-radius: var(--radius-sm);
-    background: rgba(99, 102, 241, 0.06);
-    border: 1px solid rgba(99, 102, 241, 0.16);
-    color: var(--primary-dark);
-    font-weight: 600;
-}
-
-.vacation-preview.active {
-    display: block;
 }
 
 /* Forecast */
@@ -1477,63 +1374,6 @@ input:checked + .toggle-slider:before {
         flex-wrap: wrap;
         justify-content: flex-end;
     }
-
-    .form-row {
-        grid-template-columns: 1fr;
-    }
-}
-
-/* Calendar Contrast Improvements */
-.cal-day {
-    border: 1px solid #e2e8f0;
-}
-
-.cal-day.holiday {
-    background: linear-gradient(180deg, #fff1f2 0%, #ffe4e6 100%);
-    border-color: #fda4af;
-}
-
-.cal-day.vacation {
-    background: linear-gradient(180deg, #ecfeff 0%, #ccfbf1 100%);
-    border-color: #2dd4bf;
-}
-
-.cal-day.holiday.vacation {
-    background:
-        linear-gradient(135deg, rgba(253, 164, 175, 0.28) 0%, rgba(45, 212, 191, 0.28) 100%),
-        #ffffff;
-    border-color: #14b8a6;
-    box-shadow: inset 0 0 0 1px rgba(253, 164, 175, 0.8);
-}
-
-.cal-day.vacation .day-number,
-.cal-day.holiday .day-number {
-    color: #0f172a;
-    font-weight: 700;
-}
-
-.day-event.holiday {
-    background: #fee2e2;
-    border: 1px solid #fda4af;
-    color: #9f1239;
-    font-weight: 600;
-}
-
-.day-event.vacation {
-    background: #ccfbf1;
-    border: 1px solid #2dd4bf;
-    color: #115e59;
-    font-weight: 600;
-}
-
-.legend-color.holiday {
-    border-color: #f43f5e;
-    background: #ffe4e6;
-}
-
-.legend-color.vacation {
-    border-color: #14b8a6;
-    background: #ccfbf1;
 }
 
 /* Empty State */
@@ -1628,6 +1468,416 @@ input:checked + .toggle-slider:before {
 .legend-color.today {
     border-color: var(--primary);
     background: var(--primary);
+}
+
+/* Mobile interaction and layout safeguards */
+button,
+a.btn,
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea {
+    min-height: 44px;
+}
+
+button,
+a.btn,
+select,
+input,
+textarea {
+    touch-action: manipulation;
+}
+
+.btn-icon {
+    min-width: 44px;
+    padding: 0.5rem;
+    justify-content: center;
+}
+
+.header-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.checkbox-label {
+    min-height: 44px;
+}
+
+.checkbox-label input[type='checkbox'],
+.checkbox-label input[type='radio'] {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.modal-body {
+    min-height: 0;
+}
+
+.calendar-grid {
+    touch-action: manipulation;
+}
+
+.cal-day {
+    min-width: 0;
+    min-height: 80px;
+    padding: 0.75rem;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.vacation-edit,
+.vacation-delete {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    touch-action: manipulation;
+}
+
+@media (max-width: 768px) {
+    body {
+        padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+        overflow-x: hidden;
+    }
+
+    .header {
+        padding: 0.75rem 1rem;
+    }
+
+    .header-content {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .logo {
+        min-width: 0;
+        font-size: 1.15rem;
+        gap: 0.5rem;
+    }
+
+    .logo svg {
+        width: 24px;
+        height: 24px;
+        flex: 0 0 24px;
+    }
+
+    .header-actions {
+        gap: 0.25rem;
+    }
+
+    .nav-tabs {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 100;
+        display: flex;
+        gap: 0;
+        width: 100%;
+        padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--border);
+        border-bottom: 0;
+        box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.12);
+        overflow: visible;
+    }
+
+    .nav-tab {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 52px;
+        padding: 0.35rem 0.15rem;
+        flex-direction: column;
+        justify-content: center;
+        gap: 0.15rem;
+        border-bottom: 0;
+        border-radius: var(--radius-sm);
+        font-size: 0.68rem;
+        line-height: 1.15;
+        text-align: center;
+        white-space: normal;
+    }
+
+    .nav-tab svg {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 20px;
+    }
+
+    .nav-tab.active {
+        background: rgba(99, 102, 241, 0.1);
+    }
+
+    .main-content {
+        width: 100%;
+        padding: 1rem 0.75rem;
+    }
+
+    .card {
+        min-width: 0;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .card-header {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    .card-header > * {
+        min-width: 0;
+    }
+
+    .card-header > .btn,
+    .card-header > button,
+    .card-header > div:last-child {
+        max-width: 100%;
+    }
+
+    .balance-card {
+        padding: 1.25rem;
+    }
+
+    .balance-breakdown {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+    }
+
+    .balance-item-value {
+        font-size: 1.15rem;
+    }
+
+    .calendar-card .card-header {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 44px;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .calendar-card .card-header h2 {
+        grid-column: 2;
+        grid-row: 1;
+        text-align: center;
+        font-size: 1.05rem;
+    }
+
+    .calendar-card .card-header #cal-prev-month {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .calendar-card .card-header #cal-next-month {
+        grid-column: 3;
+        grid-row: 1;
+    }
+
+    .calendar-card .card-header #cal-today-btn {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        justify-self: center;
+    }
+
+    .cal-header span {
+        padding: 0.5rem 0.15rem;
+        font-size: 0.7rem;
+    }
+
+    .cal-day {
+        min-height: clamp(48px, 16vw, 68px);
+        padding: 0.4rem 0.25rem;
+        text-align: center;
+    }
+
+    .day-number {
+        font-size: 0.9rem;
+    }
+
+    .vacation-item {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        padding: 0.85rem;
+    }
+
+    .vacation-info {
+        min-width: 0;
+        flex: 1 1 calc(100% - 56px);
+    }
+
+    .vacation-days {
+        margin-left: 56px;
+        order: 3;
+    }
+
+    .vacation-actions {
+        margin-left: auto;
+        order: 2;
+    }
+
+    .vacation-edit,
+    .vacation-delete {
+        min-width: 48px;
+        min-height: 48px;
+    }
+
+    .suggestion-item {
+        min-width: 0;
+    }
+
+    .suggestion-actions,
+    .filter-header,
+    .form-actions {
+        flex-wrap: wrap;
+    }
+
+    .suggestion-actions .btn,
+    .suggestion-actions .why-button,
+    .filter-header .btn,
+    .form-actions .btn {
+        flex: 1 1 9rem;
+        justify-content: center;
+    }
+
+    .filter-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .filter-controls input,
+    .filter-controls select {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .category-filters {
+        grid-column: 1 / -1;
+    }
+
+    .forecast-table-container {
+        overflow-x: auto;
+        max-width: 100%;
+    }
+
+    .forecast-table {
+        min-width: 520px;
+    }
+
+    .forecast-card .card-header > div:last-child {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        width: 100%;
+    }
+
+    .forecast-card .card-header > div:last-child > * {
+        flex: 1 1 8rem;
+    }
+
+    .notes-card .form-row {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .settings-grid,
+    .setting-row {
+        min-width: 0;
+    }
+
+    .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    .modal {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: none;
+        height: 100dvh;
+        max-height: 100dvh;
+        padding: 0;
+        border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .modal-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 1rem 1rem 0.75rem;
+        background: var(--card);
+        border-bottom: 1px solid var(--border);
+    }
+
+    .modal-body {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 1rem;
+    }
+
+    .modal-body .form-actions {
+        position: sticky;
+        bottom: -1rem;
+        margin: 1rem -1rem -1rem;
+        padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+        background: var(--card);
+        border-top: 1px solid var(--border);
+    }
+
+    .modal-body .form-actions .btn {
+        min-height: 48px;
+    }
+
+    .wizard-controls {
+        flex-wrap: wrap;
+    }
+
+    .wizard-controls > * {
+        flex: 1 1 100%;
+    }
+
+    .toast {
+        right: 0.75rem;
+        bottom: calc(4.75rem + env(safe-area-inset-bottom));
+        left: 0.75rem;
+    }
+}
+
+@media (max-width: 360px) {
+    .main-content {
+        padding-right: 0.5rem;
+        padding-left: 0.5rem;
+    }
+
+    .card {
+        padding: 0.75rem;
+    }
+
+    .nav-tab {
+        font-size: 0.62rem;
+    }
+
+    .cal-day {
+        min-height: 46px;
+        padding-right: 0.1rem;
+        padding-left: 0.1rem;
+    }
+
+    .day-event {
+        display: none;
+    }
 }
 
 /* Modern UI Refresh */
@@ -1757,12 +2007,6 @@ body {
     accent-color: var(--primary);
 }
 
-.form-actions {
-    display: flex;
-    gap: 0.7rem;
-    margin-top: 1rem;
-}
-
 .vacation-item,
 .suggestion-item {
     background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
@@ -1779,13 +2023,50 @@ body {
         width: 94%;
         padding: 1.25rem;
     }
+}
 
-    .form-actions {
-        flex-wrap: wrap;
+/* Keep the mobile navigation and full-screen modal overrides last. */
+@media (max-width: 768px) {
+    .nav-tabs {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 100;
+        display: flex;
+        gap: 0;
+        width: 100%;
+        padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--border);
+        border-bottom: 0;
+        box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.12);
+        overflow: visible;
     }
 
-    .form-actions .btn {
-        flex: 1;
+    .nav-tab {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 52px;
+        padding: 0.35rem 0.15rem;
+        flex-direction: column;
         justify-content: center;
+        gap: 0.15rem;
+        border-bottom: 0;
+        border-radius: var(--radius-sm);
+        font-size: 0.68rem;
+        line-height: 1.15;
+        text-align: center;
+        white-space: normal;
+    }
+
+    .modal {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: none;
+        height: 100dvh;
+        max-height: 100dvh;
+        padding: 0;
+        border-radius: var(--radius) var(--radius) 0 0;
     }
 }
