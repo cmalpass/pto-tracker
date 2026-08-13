@@ -122,6 +122,7 @@ function setupTabs() {
         document.querySelectorAll('.tab-content').forEach(panel => {
             const selected = panel.id === `tab-${tab.dataset.tab}`;
             panel.classList.toggle('active', selected);
+            panel.setAttribute('aria-hidden', String(!selected));
             panel.hidden = !selected;
         });
         if (tab.dataset.tab === 'calendar') renderCalendar();
@@ -143,6 +144,8 @@ function setupTabs() {
             activateTab(nextTab);
         });
     });
+    const selectedTab = tabs.find(tab => tab.getAttribute('aria-selected') === 'true');
+    if (selectedTab) activateTab(selectedTab);
 }
 
 function setupThemeToggle() {
@@ -335,7 +338,36 @@ function setupCalendar() {
     });
 
     // Allow adding PTO directly from a calendar day.
-    document.getElementById('calendar-grid').addEventListener('click', async (e) => {
+    const calendar = document.getElementById('calendar-grid');
+    calendar.addEventListener('keydown', async event => {
+        const day = event.target.closest('.cal-day[data-date]');
+        if (!day) return;
+        const date = parseIsoDateToLocal(day.dataset.date);
+        let nextDate = null;
+        if (event.key === 'ArrowLeft') nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1);
+        if (event.key === 'ArrowRight') nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+        if (event.key === 'ArrowUp') nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 7);
+        if (event.key === 'ArrowDown') nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7);
+        if (event.key === 'Home') nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() - date.getDay());
+        if (event.key === 'End') nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + (6 - date.getDay()));
+        if (event.key === 'PageUp' || event.key === 'PageDown') {
+            event.preventDefault();
+            const monthDelta = event.key === 'PageUp' ? -1 : 1;
+            state.currentMonth += monthDelta;
+            if (state.currentMonth < 0) { state.currentMonth = 11; state.currentYear--; }
+            if (state.currentMonth > 11) { state.currentMonth = 0; state.currentYear++; }
+            await renderCalendar();
+            const focusDate = new Date(state.currentYear, state.currentMonth,
+                Math.min(date.getDate(), new Date(state.currentYear, state.currentMonth + 1, 0).getDate()));
+            calendar.querySelector(`[data-date="${toIsoDate(focusDate)}"]`)?.focus();
+            return;
+        }
+        if (!nextDate || nextDate.getMonth() !== state.currentMonth
+            || nextDate.getFullYear() !== state.currentYear) return;
+        event.preventDefault();
+        calendar.querySelector(`[data-date="${toIsoDate(nextDate)}"]`)?.focus();
+    });
+    calendar.addEventListener('click', async (e) => {
         const dayEl = e.target.closest('.cal-day[data-date]');
         if (!dayEl) return;
 

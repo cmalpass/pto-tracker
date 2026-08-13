@@ -58,7 +58,8 @@
             </div>
         </header>
 
-        <nav class="nav-tabs" id="pto-tabs" role="tablist" aria-label="PTO Tracker sections">
+        <nav class="nav-tabs" id="pto-tabs" role="tablist" aria-label="PTO Tracker sections"
+             aria-orientation="horizontal">
             <button class="nav-tab active" id="tab-dashboard-tab" role="tab" aria-selected="true"
                     aria-controls="tab-dashboard" tabindex="0" data-tab="dashboard">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -106,7 +107,8 @@
         </nav>
 
         <main class="main-content">
-            <div class="tab-content active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-dashboard-tab" tabindex="0">
+            <div class="tab-content active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-dashboard-tab"
+                 aria-hidden="false" tabindex="0">
                 <section class="dashboard-notification-alert" id="dashboard-notification-alert"
                          aria-label="Priority PTO reminder" hidden></section>
                 <div class="dashboard-grid">
@@ -205,13 +207,17 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-calendar" role="tabpanel" aria-labelledby="tab-calendar-tab" tabindex="0" hidden>
+            <div class="tab-content" id="tab-calendar" role="tabpanel" aria-labelledby="tab-calendar-tab"
+                 aria-hidden="true" tabindex="0" hidden>
                 <div class="card calendar-card">
                     <div class="card-header">
-                        <button class="btn btn-sm" id="cal-prev-month">&lt;</button>
+                        <button class="btn btn-sm" id="cal-prev-month" type="button"
+                                aria-label="Previous month">&lt;</button>
                         <h2 id="calendar-title"></h2>
-                        <button class="btn btn-sm" id="cal-next-month">&gt;</button>
-                        <button class="btn btn-sm" id="cal-today-btn">Today</button>
+                        <button class="btn btn-sm" id="cal-next-month" type="button"
+                                aria-label="Next month">&gt;</button>
+                        <button class="btn btn-sm" id="cal-today-btn" type="button"
+                                aria-label="Go to today">Today</button>
                     </div>
                     <div class="calendar-grid" id="calendar-grid" role="grid" aria-labelledby="calendar-title"></div>
                     <div class="calendar-legend">
@@ -225,7 +231,8 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-vacations" role="tabpanel" aria-labelledby="tab-vacations-tab" tabindex="0" hidden>
+            <div class="tab-content" id="tab-vacations" role="tabpanel" aria-labelledby="tab-vacations-tab"
+                 aria-hidden="true" tabindex="0" hidden>
                 <div class="card vacations-card">
                     <div class="card-header">
                         <h2>Planned Vacations</h2>
@@ -289,7 +296,8 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-heatmap" role="tabpanel" aria-labelledby="tab-heatmap-tab" tabindex="0" hidden>
+            <div class="tab-content" id="tab-heatmap" role="tabpanel" aria-labelledby="tab-heatmap-tab"
+                 aria-hidden="true" tabindex="0" hidden>
                 <div class="card heatmap-card">
                     <div class="card-header">
                         <div>
@@ -308,7 +316,8 @@
                 </div>
             </div>
 
-            <div class="tab-content" id="tab-forecast" role="tabpanel" aria-labelledby="tab-forecast-tab" tabindex="0" hidden>
+            <div class="tab-content" id="tab-forecast" role="tabpanel" aria-labelledby="tab-forecast-tab"
+                 aria-hidden="true" tabindex="0" hidden>
                 <div class="card forecast-card">
                     <div class="card-header">
                         <h2>PTO Balance Forecast</h2>

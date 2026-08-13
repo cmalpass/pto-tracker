@@ -392,8 +392,16 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
         await page.keyboard.press("ArrowRight")
         assert await page.locator("#tab-calendar-tab").get_attribute("aria-selected") == "true"
         assert await page.locator("#tab-calendar").is_visible()
+        assert await page.locator("#tab-dashboard").get_attribute("aria-hidden") == "true"
         await page.wait_for_selector(".cal-day[data-date]")
         assert await page.locator(".cal-day[data-date]").first.get_attribute("aria-label")
+        assert await page.locator("#cal-prev-month").get_attribute("aria-label") == "Previous month"
+        first_day = page.locator(".cal-day[data-date]").first
+        await first_day.focus()
+        await page.keyboard.press("ArrowRight")
+        assert await page.locator(".cal-day[data-date]").nth(1).evaluate(
+            "(node) => node === document.activeElement"
+        )
         await page.locator("#cal-prev-month").focus()
         await page.click("#btn-settings")
         settings = page.locator("#settings-modal")
@@ -417,6 +425,8 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
         await page.wait_for_selector(".heatmap-cell")
         assert "Color intensity" in await page.locator("#heatmap-legend").text_content()
         assert await page.locator(".heatmap-cell").first.get_attribute("aria-label")
+        assert await page.locator(".heatmap-cell-score").first.is_visible()
+        assert await page.locator(".heatmap-cell-status").first.text_content() in {"Booked", "Available"}
     finally:
         await context.close()
 

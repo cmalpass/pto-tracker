@@ -191,6 +191,9 @@ export function renderCalendar(year, month, today, monthEvents) {
             ...eventLabels
         ].filter(Boolean);
         cell.setAttribute('aria-label', [dateLabel, ...stateLabels].join('. '));
+        cell.tabIndex = classes.includes('today') || (!container.querySelector('.cal-day[data-date]') && day === 1)
+            ? 0 : -1;
+        if (classes.includes('today')) cell.setAttribute('aria-current', 'date');
         cell.title = cell.getAttribute('aria-label');
         const vacationEvent = dayEvents.find(event => event.type === 'vacation' && event.id);
         if (vacationEvent) cell.dataset.vacationId = vacationEvent.id;
@@ -588,7 +591,9 @@ export function renderHeatmap(data) {
             week.already_booked ? 'already booked' : 'available',
             week.holidays.length ? `holidays: ${week.holidays.join(', ')}` : 'no holidays'
         ].join('. '));
-        cell.textContent = week.week_number;
+        appendText(cell, 'span', 'heatmap-cell-number', `Week ${week.week_number}`);
+        appendText(cell, 'span', 'heatmap-cell-score', `Score ${week.score.toFixed(2)}`);
+        appendText(cell, 'span', 'heatmap-cell-status', week.already_booked ? 'Booked' : 'Available');
         grid.append(cell);
     });
     legend.hidden = false;

@@ -1183,6 +1183,22 @@ body {
     cursor: pointer;
     font-weight: 700;
     transition: transform 0.15s, border-color 0.15s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.1rem;
+}
+
+.heatmap-cell-score,
+.heatmap-cell-status {
+    display: block;
+    font-size: 0.65rem;
+    line-height: 1.1;
+}
+
+.heatmap-cell-status {
+    font-weight: 500;
 }
 
 .heatmap-cell:hover,
