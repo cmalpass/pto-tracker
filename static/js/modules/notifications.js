@@ -38,9 +38,7 @@ function normalizedToday(pto, config, today) {
 
 function createForfeitureAlert({ pto, config, vacations, today, year, balance, unit }) {
     const available = Math.max(0, balance.accrued - balance.used);
-    const limit = config.pto_accrual_type === 'hours'
-        ? Number(config.pto_carryover_limit || 0) * Number(config.pto_hours_per_day || 8)
-        : Number(config.pto_carryover_limit || 0);
+    const limit = Number(config.pto_carryover_limit || 0);
     const forfeited = !config.pto_uses_rollover
         ? available
         : config.pto_lose_above_limit ? Math.max(0, available - limit) : 0;
@@ -67,9 +65,7 @@ function createForfeitureAlert({ pto, config, vacations, today, year, balance, u
 function createCapAlert({ config, year, balance, unit }) {
     if (!config.pto_uses_rollover || !config.pto_lose_above_limit) return null;
     const available = Math.max(0, balance.accrued - balance.used);
-    const limit = config.pto_accrual_type === 'hours'
-        ? Number(config.pto_carryover_limit || 0) * Number(config.pto_hours_per_day || 8)
-        : Number(config.pto_carryover_limit || 0);
+    const limit = Number(config.pto_carryover_limit || 0);
     if (limit <= 0 || available < limit * 0.8) return null;
     const remaining = Math.max(0, limit - available);
     return {
@@ -138,10 +134,10 @@ export function generateNotifications({ pto, config, vacations = [], today } = {
     if (!pto || !config) throw new TypeError('PTO and config are required');
     const localToday = normalizedToday(pto, config, today);
     if (!pto.isCanonicalDate(localToday)) throw new TypeError('today must use YYYY-MM-DD format');
-    const year = Number(localToday.slice(0, 4));
+    const year = pto.getPtoYearForDate(localToday, config);
     const normalizedVacations = Array.isArray(vacations) ? vacations : [];
     const unit = config.pto_accrual_type === 'hours' ? 'hours' : 'days';
-    const yearEnd = `${year}-12-31`;
+    const yearEnd = pto.getPtoYearEnd(year, config);
     const balance = pto.calculateBalanceOnDate(yearEnd, config, normalizedVacations);
     const alerts = [
         createForfeitureAlert({

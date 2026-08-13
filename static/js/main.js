@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-1';
+} from './modules/state.js?v=20260813-5';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-1';
+} from './modules/dom.js?v=20260813-4';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,24 +30,24 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-1';
+} from './modules/rendering.js?v=20260813-5';
 import {
     dismissNotification,
     generateNotifications,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-1';
+} from './modules/notifications.js?v=20260813-5';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-1';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-1';
-import { configWarnings } from './modules/settings.js?v=20260813-1';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-1';
+} from './modules/calendar.js?v=20260813-4';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-4';
+import { configWarnings } from './modules/settings.js?v=20260813-5';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-4';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-1';
+} from './modules/forecast.js?v=20260813-4';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -85,6 +85,47 @@ function resetSuggestionFilters() {
     state.suggestionFilters = { categories: [], sortBy: 'impact' };
     localStorage.setItem('pto-suggestion-filters', JSON.stringify(state.suggestionFilters));
     loadVacations();
+}
+
+function renderPtoYearBoundaries(boundaries = []) {
+    const container = document.getElementById('pto-year-boundary-rows');
+    if (!container) return;
+    container.replaceChildren();
+    boundaries.forEach(boundary => addPtoYearBoundaryRow(boundary));
+}
+
+function addPtoYearBoundaryRow(boundary = {}) {
+    const container = document.getElementById('pto-year-boundary-rows');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'pto-year-boundary-row';
+    const year = document.createElement('input');
+    year.type = 'number';
+    year.min = '1';
+    year.step = '1';
+    year.inputMode = 'numeric';
+    year.value = boundary.year || new Date().getUTCFullYear();
+    year.dataset.boundaryYear = 'true';
+    year.setAttribute('aria-label', 'PTO year');
+    const finalDate = document.createElement('input');
+    finalDate.type = 'date';
+    finalDate.value = boundary.final_date || `${year.value}-12-31`;
+    finalDate.dataset.boundaryDate = 'true';
+    finalDate.setAttribute('aria-label', 'PTO year final day');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-secondary btn-sm';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => row.remove());
+    row.append(year, finalDate, remove);
+    container.append(row);
+}
+
+function collectPtoYearBoundaries() {
+    return [...document.querySelectorAll('.pto-year-boundary-row')].map(row => ({
+        year: row.querySelector('[data-boundary-year]')?.value,
+        final_date: row.querySelector('[data-boundary-date]')?.value
+    }));
 }
 
 export function startApplication() {
@@ -173,6 +214,7 @@ async function loadDashboard() {
         state.today = config.current_date;
         state.currentYear = config.current_year;
         state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
+        updateUnitLabels(config);
         refreshNotifications();
         await loadForecast();
         const now = parseIsoDateToLocal(state.today);
@@ -180,7 +222,7 @@ async function loadDashboard() {
         const yearlyForecast = yearlyForecastFor(config.current_year, config, vacations);
         const typeBreakdown = PTO.getVacationTypeBreakdown(config.current_year, config, vacations);
         const remainingUsage = PTO.calculateVacationUsageInRange(
-            config.current_date, `${config.current_year}-12-31`, config, vacations);
+            config.current_date, PTO.getPtoYearEnd(config.current_year, config), config, vacations);
         const stats = {
             current_balance: balance,
             yearly_forecast: yearlyForecast,
@@ -306,6 +348,33 @@ function daysRemainingThisYear(today = getTodayDate()) {
     const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
     const yearEndUtc = Date.UTC(today.getFullYear(), 11, 31);
     return Math.round((yearEndUtc - todayUtc) / 86400000);
+}
+
+function ptoUnit(config = state.config) {
+    return config.pto_accrual_type === 'hours' ? 'hours' : 'days';
+}
+
+function updateUnitLabels(config) {
+    const unit = ptoUnit(config);
+    const labels = {
+        'accrued-label': `Accrued (${unit})`,
+        'used-label': `Used (${unit})`,
+        'limit-label': `Limit (${unit})`,
+        'stat-accrued-ytd-label': `Accrued YTD (${unit})`,
+        'stat-used-ytd-label': `Used YTD (${unit})`,
+        'stat-scheduled-pto-label': `Scheduled PTO Remaining (${unit})`,
+        'carryover-limit-label': `Carryover Limit (${unit})`,
+        'forecast-accrued-heading': `Accrued (${unit})`,
+        'forecast-used-heading': `Used (${unit})`,
+        'forecast-balance-heading': `Balance (${unit})`,
+        'forecast-limit-heading': `Limit (${unit})`
+    };
+    Object.entries(labels).forEach(([id, text]) => {
+        const label = document.getElementById(id);
+        if (label) label.textContent = text;
+    });
+    const carryoverInput = document.getElementById('carryover-limit');
+    if (carryoverInput) carryoverInput.step = unit === 'hours' ? '0.25' : '1';
 }
 
 function renderMiniCalendar() {
@@ -761,9 +830,17 @@ async function calcVacationDays() {
     daysInput.readOnly = autoDays;
     const preview = document.getElementById('vacation-preview');
     const hours = normalizeQuarterHours(parseFloat(hoursInput.value) || 0);
-    if (days > 0 && hours > 0) preview.textContent = `This entry will use ${days} PTO day(s) and ${hours} hour(s)`;
-    else if (days > 0) preview.textContent = `This entry will use ${days} PTO day(s)`;
-    else preview.textContent = `This entry will use ${hours} PTO hour(s)`;
+    let booking;
+    try {
+        booking = PTO.normalizeBooking(days, hours, state.config);
+    } catch (err) {
+        preview.textContent = err.message || 'Invalid PTO amount';
+        preview.classList.add('active');
+        return;
+    }
+    const unit = ptoUnit();
+    const amount = booking.amount.toFixed(2).replace(/\.?0+$/, '');
+    preview.textContent = `This entry will use ${amount} PTO ${unit}`;
     preview.classList.add('active');
 }
 
@@ -1057,6 +1134,8 @@ function setupSettings() {
     setupDialog(document.getElementById('settings-modal'), closeSettings);
     document.getElementById('btn-preview-policy').addEventListener('click', previewPolicy);
     document.getElementById('btn-apply-policy').addEventListener('click', applyPolicy);
+    document.getElementById('btn-add-pto-year-boundary').addEventListener(
+        'click', () => addPtoYearBoundaryRow());
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const form = e.target;
@@ -1068,6 +1147,7 @@ function setupSettings() {
         }
         try {
             const merged = { ...state.config, ...data };
+            merged.pto_year_boundaries = collectPtoYearBoundaries();
             delete merged.current_date;
             delete merged.current_year;
             const warnings = configWarnings(merged);
@@ -1102,6 +1182,11 @@ async function openSettings() {
         document.getElementById('accrual-method').value = config.accrual_method || 'full';
         document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
         document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
+        renderPtoYearBoundaries(config.pto_year_boundaries || []);
+        document.getElementById('forecast-baseline-enabled').checked = config.forecast_baseline_enabled === true;
+        document.getElementById('forecast-baseline-date').value =
+            config.forecast_baseline_date || config.accrual_start_date || getTodayIsoDate();
+        document.getElementById('forecast-baseline-balance').value = config.forecast_baseline_balance || 0;
         document.getElementById('timezone').value = config.timezone || 'UTC';
         document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
         document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
@@ -1353,16 +1438,16 @@ function renderForecastChart() {
             interaction: { intersect: false, mode: 'index' },
             plugins: {
                 legend: { position: 'top', labels: { usePointStyle: true, padding: 20, font: { family: 'Inter', size: 12 } } },
-                tooltip: { backgroundColor: 'rgba(17, 24, 39, 0.9)', titleFont: { family: 'Inter', size: 13 }, bodyFont: { family: 'Inter', size: 12 }, padding: 12, cornerRadius: 8, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` } }
+                tooltip: { backgroundColor: 'rgba(17, 24, 39, 0.9)', titleFont: { family: 'Inter', size: 13 }, bodyFont: { family: 'Inter', size: 12 }, padding: 12, cornerRadius: 8, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} ${ptoUnit()}` } }
             },
             scales: {
                 x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 12 }, color: '#6b7280' } },
-                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: 'Inter', size: 12 }, color: '#6b7280', callback: (v) => v + ' days' } }
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: 'Inter', size: 12 }, color: '#6b7280', callback: (v) => `${v} ${ptoUnit()}` } }
             }
         }
     });
 }
 
 function renderForecastTable() {
-    renderForecastTableDom(state.forecast);
+    renderForecastTableDom(state.forecast, ptoUnit());
 }

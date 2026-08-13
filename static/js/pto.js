@@ -162,8 +162,45 @@
             pto_carryover_limit: numberValue(source.pto_carryover_limit, 40),
             pto_uses_rollover: boolValue(source.pto_uses_rollover, true),
             pto_lose_above_limit: boolValue(source.pto_lose_above_limit, false),
+            forecast_baseline_enabled: boolValue(source.forecast_baseline_enabled, false),
+            forecast_baseline_date: source.forecast_baseline_date || source.accrual_start_date,
+            forecast_baseline_balance: numberValue(source.forecast_baseline_balance, 0),
+            pto_year_boundaries: normalizePtoYearBoundaries(source.pto_year_boundaries),
             timezone: getConfiguredTimezone(source)
         };
+    }
+
+    function normalizePtoYearBoundaries(value) {
+        if (!Array.isArray(value)) return [];
+        return value.map(item => ({
+            year: Number(item?.year),
+            final_date: typeof item?.final_date === 'string' ? item.final_date : ''
+        }));
+    }
+
+    function ptoYearEnd(year, config) {
+        const normalized = normalizedConfig(config);
+        const configured = normalized.pto_year_boundaries.find(item => item.year === Number(year));
+        const fallback = `${Number(year)}-12-31`;
+        return configured && isCanonicalDate(configured.final_date)
+            ? configured.final_date : fallback;
+    }
+
+    function ptoYearStart(year, config) {
+        const previousEnd = parseCanonicalDate(ptoYearEnd(Number(year) - 1, config));
+        return formatDate(addDays(previousEnd, 1));
+    }
+
+    function getPtoYearForDate(targetDate, config) {
+        const target = typeof targetDate === 'string' ? parseCanonicalDate(targetDate) : targetDate;
+        if (!(target instanceof Date) || Number.isNaN(target.getTime())) {
+            throw new TypeError('targetDate must be a valid date');
+        }
+        const normalized = normalizedConfig(config);
+        let year = target.getUTCFullYear();
+        while (target > parseCanonicalDate(ptoYearEnd(year, normalized))) year += 1;
+        while (target < parseCanonicalDate(ptoYearStart(year, normalized))) year -= 1;
+        return year;
     }
 
     function getConfiguredTimezone(config) {
@@ -203,7 +240,7 @@
     }
 
     function getLocalYear(config, now) {
-        return Number(getLocalToday(config, now).slice(0, 4));
+        return getPtoYearForDate(getLocalToday(config, now), config);
     }
 
     function vestingMultiplier(targetDate, config) {
@@ -539,8 +576,13 @@
     function getVacationTypeBreakdown(year, config, vacations) {
         if (!Number.isInteger(Number(year))) throw new TypeError('year must be an integer');
         const normalized = normalizedConfig(config);
-        const start = `${Number(year)}-01-01`;
-        const end = `${Number(year)}-12-31`;
+        const ptoStart = parseCanonicalDate(ptoYearStart(Number(year), normalized));
+        const ptoEnd = parseCanonicalDate(ptoYearEnd(Number(year), normalized));
+        const baselineStart = normalized.forecast_baseline_enabled
+            ? normalized.forecast_baseline_date : formatDate(ptoStart);
+        const start = parseCanonicalDate(baselineStart) > ptoStart
+            ? baselineStart : formatDate(ptoStart);
+        const end = formatDate(ptoEnd);
         const unit = normalized.pto_accrual_type === 'hours' ? 'hours' : 'days';
         return Object.values(LEAVE_TYPES).map(type => {
             const records = (vacations || []).filter(item =>
@@ -563,32 +605,43 @@
         const normalized = normalizedConfig(config);
         const target = parseCanonicalDate(targetDate);
         const accrualStart = parseCanonicalDate(normalized.accrual_start_date);
+        const baselineEnabled = normalized.forecast_baseline_enabled;
+        const baselineDate = parseCanonicalDate(normalized.forecast_baseline_date);
         const isHours = normalized.pto_accrual_type === 'hours';
-        const limit = isHours
-            ? normalized.pto_carryover_limit * normalized.pto_hours_per_day
-            : normalized.pto_carryover_limit;
+        const limit = normalized.pto_carryover_limit;
         const empty = {
             accrued: 0, used: 0, used_days: 0, used_hours: 0,
             balance: 0, limit: round2(limit), carry: 0
         };
+        if (baselineEnabled && target < baselineDate) return empty;
         if (target < accrualStart) return empty;
         let carry = 0;
-        for (let year = accrualStart.getUTCFullYear(); year <= target.getUTCFullYear(); year += 1) {
-            const calendarStart = dateOf(year, 1, 1);
-            const calendarEnd = dateOf(year, 12, 31);
-            const windowStart = accrualStart > calendarStart ? accrualStart : calendarStart;
-            const windowEnd = target < calendarEnd ? target : calendarEnd;
-            const yearAccrual = calculateAccrualToDate(formatDate(windowEnd), normalized)
-                - calculateAccrualToDate(formatDate(addDays(windowStart, -1)), normalized);
-            const usage = calculateVacationUsageInRange(
-                windowStart, windowEnd, normalized, vacations || []);
+        const firstYear = getPtoYearForDate(
+            baselineEnabled ? baselineDate : accrualStart, normalized);
+        const targetYear = getPtoYearForDate(target, normalized);
+        for (let year = firstYear; year <= targetYear; year += 1) {
+            const periodStart = parseCanonicalDate(ptoYearStart(year, normalized));
+            const periodEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
+            const policyStart = accrualStart > periodStart ? accrualStart : periodStart;
+            const windowStart = baselineEnabled && baselineDate > policyStart
+                ? baselineDate : policyStart;
+            const windowEnd = target < periodEnd ? target : periodEnd;
+            const yearAccrual = windowStart <= windowEnd
+                ? calculateAccrualToDate(formatDate(windowEnd), normalized)
+                    - calculateAccrualToDate(formatDate(addDays(windowStart, -1)), normalized)
+                : 0;
+            const usage = windowStart <= windowEnd
+                ? calculateVacationUsageInRange(windowStart, windowEnd, normalized, vacations || [])
+                : { days: 0, hours: 0 };
             const used = isHours
                 ? usage.days * normalized.pto_hours_per_day + usage.hours
                 : usage.days + usage.hours / normalized.pto_hours_per_day;
-            const balance = Math.max(0, carry + yearAccrual - used);
-            if (year === target.getUTCFullYear()) {
+            const opening = baselineEnabled && year === firstYear
+                ? normalized.forecast_baseline_balance : carry;
+            const balance = Math.max(0, opening + yearAccrual - used);
+            if (year === targetYear) {
                 return {
-                    accrued: round2(carry + yearAccrual),
+                    accrued: round2(opening + yearAccrual),
                     used: round2(used),
                     used_days: round2(usage.days),
                     used_hours: round2(usage.hours),
@@ -605,11 +658,14 @@
     }
 
     function generateYearlyForecast(year, config, vacations) {
+        const normalized = normalizedConfig(config);
+        const yearEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
         return Array.from({ length: 12 }, (_, index) => {
             const month = index + 1;
             const end = dateOf(year, month + 1, 0);
+            const forecastEnd = end < yearEnd ? end : yearEnd;
             return {
-                ...calculateBalanceOnDate(formatDate(end), config, vacations),
+                ...calculateBalanceOnDate(formatDate(forecastEnd), normalized, vacations),
                 month: `${year}-${String(month).padStart(2, '0')}`,
                 month_name: MONTH_NAMES[index]
             };
@@ -622,14 +678,19 @@
         return Array.from({ length: years }, (_, offset) => {
             const year = startYear + offset;
             const monthly = generateYearlyForecast(year, normalized, vacations);
-            const yearStart = dateOf(year, 1, 1);
-            const yearEnd = dateOf(year, 12, 31);
-            const totalAccrued = calculateAccrualToDate(formatDate(yearEnd), normalized)
-                - calculateAccrualToDate(formatDate(addDays(yearStart, -1)), normalized);
+            const yearStart = parseCanonicalDate(ptoYearStart(year, normalized));
+            const yearEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
+            const yearEndResult = calculateBalanceOnDate(formatDate(yearEnd), normalized, vacations || []);
+            const totalAccrued = normalized.forecast_baseline_enabled
+                ? yearEndResult.accrued
+                : calculateAccrualToDate(formatDate(yearEnd), normalized)
+                    - calculateAccrualToDate(formatDate(addDays(yearStart, -1)), normalized);
             const usage = calculateVacationUsageInRange(yearStart, yearEnd, normalized, vacations || []);
-            const totalUsed = normalized.pto_accrual_type === 'hours'
-                ? usage.days * normalized.pto_hours_per_day + usage.hours
-                : usage.days + usage.hours / normalized.pto_hours_per_day;
+            const totalUsed = normalized.forecast_baseline_enabled
+                ? yearEndResult.used
+                : normalized.pto_accrual_type === 'hours'
+                    ? usage.days * normalized.pto_hours_per_day + usage.hours
+                    : usage.days + usage.hours / normalized.pto_hours_per_day;
             const yearEndBalance = monthly[11].balance;
             const limit = monthly[11].limit;
             let carryover = yearEndBalance;
@@ -719,7 +780,7 @@
         const current = projected.accrued - projected.used;
         const requested = bookingAmount(requestedDays, requestedHours, normalized);
         const balanceAfter = current - requested;
-        const yearEnd = `${end.getUTCFullYear()}-12-31`;
+        const yearEnd = ptoYearEnd(getPtoYearForDate(end, normalized), normalized);
         const endBalance = calculateBalanceOnDate(yearEnd, normalized, withoutEdited);
         const baselineForfeit = forfeitAmount(Math.max(0, endBalance.accrued - endBalance.used), normalized);
         const proposedForfeit = forfeitAmount(
@@ -844,8 +905,8 @@
 
     function generateHeatmap(year, config, vacations) {
         const normalized = normalizedConfig(config);
-        const yearStart = dateOf(year, 1, 1);
-        const yearEnd = dateOf(year, 12, 31);
+        const yearStart = parseCanonicalDate(ptoYearStart(year, normalized));
+        const yearEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
         const firstWeek = addDays(yearStart, -((yearStart.getUTCDay() + 6) % 7));
         const lastWeek = addDays(yearEnd, 6 - ((yearEnd.getUTCDay() + 6) % 7));
         const holidayMap = {};
@@ -968,7 +1029,7 @@
         const holidays = new Set(Object.keys(holidayMap));
         const candidates = [];
         const seen = new Set();
-        const validPtoDay = day => day.getUTCFullYear() === year && day >= earliest
+        const validPtoDay = day => day >= earliest && day <= yearEnd
             && isBusinessDay(day)
             && (normalized.pto_holidays_require_pto || !holidays.has(formatDate(day)))
             && !reserved.has(formatDate(day));
@@ -976,7 +1037,7 @@
             if (start > end || start < earliest) return;
             if (dateRange(start, end).some(day =>
                 (!holiday || formatDate(day) !== formatDate(holiday)) && !validPtoDay(day))) return;
-            if (holiday && holiday.getUTCFullYear() === year && holiday >= earliest
+            if (holiday && holiday >= earliest && holiday <= yearEnd
                     && !reserved.has(formatDate(holiday))) {
                 if (holiday < start) start = holiday;
                 if (holiday > end) end = holiday;
@@ -1169,6 +1230,10 @@
         getConfiguredTimezone,
         getLocalToday,
         getLocalYear,
+        normalizePtoYearBoundaries,
+        getPtoYearForDate,
+        getPtoYearStart: ptoYearStart,
+        getPtoYearEnd: ptoYearEnd,
         vestingMultiplier,
         normalizeHolidayCountry,
         normalizeLeaveType,

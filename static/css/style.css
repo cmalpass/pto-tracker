@@ -477,6 +477,14 @@ body {
     margin-bottom: 1.25rem;
 }
 
+.pto-year-boundary-row {
+    display: grid;
+    grid-template-columns: minmax(7rem, 0.5fr) minmax(10rem, 1fr) auto;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.65rem 0;
+}
+
 .form-label {
     display: block;
     font-size: 0.85rem;
@@ -2334,6 +2342,18 @@ body {
 .btn-primary:hover {
     transform: translateY(-2px);
     box-shadow: 0 12px 24px rgba(14, 116, 110, 0.3);
+}
+
+.header-actions .btn-icon {
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+}
+
+.header-actions .btn-icon:hover,
+.header-actions .btn-icon:focus-visible {
+    color: var(--primary-dark);
+    background: var(--bg);
 }
 
 .btn-secondary {

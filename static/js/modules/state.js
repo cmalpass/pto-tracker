@@ -16,7 +16,11 @@ export const DEFAULT_CONFIG = Object.freeze({
     pto_start_year: currentUtcYear,
     pto_vesting_schedule: 'immediate',
     pto_grace_period_days: 0,
-    timezone: 'UTC'
+    timezone: 'UTC',
+    forecast_baseline_enabled: false,
+    forecast_baseline_date: `${currentUtcYear}-01-01`,
+    forecast_baseline_balance: 0,
+    pto_year_boundaries: []
 });
 
 export const POLICY_PRESETS = Object.freeze({

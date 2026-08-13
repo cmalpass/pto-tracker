@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260813-1';
-import { clearElement, element, appendText } from './dom.js?v=20260813-1';
+import { DAYS, MONTHS, state } from './state.js?v=20260813-5';
+import { clearElement, element, appendText } from './dom.js?v=20260813-4';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -600,17 +600,17 @@ export function renderHeatmap(data) {
         'Color intensity shows days off per PTO day; stripes indicate an already booked week.');
 }
 
-export function renderForecastTable(forecast) {
+export function renderForecastTable(forecast, unit = 'days') {
     const tbody = document.getElementById('forecast-tbody');
     if (!tbody) return;
     clearElement(tbody);
     forecast.forEach(item => {
         const row = element('tr');
         appendText(row, 'td', '', item.month_name);
-        appendText(row, 'td', '', item.accrued.toFixed(1));
-        appendText(row, 'td', '', item.used.toFixed(1));
-        appendText(row, 'td', item.balance >= 0 ? 'balance-positive' : 'balance-negative', item.balance.toFixed(1));
-        appendText(row, 'td', '', item.limit.toFixed(1));
+        appendText(row, 'td', '', `${item.accrued.toFixed(1)} ${unit}`);
+        appendText(row, 'td', '', `${item.used.toFixed(1)} ${unit}`);
+        appendText(row, 'td', item.balance >= 0 ? 'balance-positive' : 'balance-negative', `${item.balance.toFixed(1)} ${unit}`);
+        appendText(row, 'td', '', `${item.limit.toFixed(1)} ${unit}`);
         row.firstElementChild.firstChild?.replaceWith(element('strong', '', item.month_name));
         tbody.append(row);
     });
