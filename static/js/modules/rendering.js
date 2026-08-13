@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260812-5';
-import { clearElement, element, appendText } from './dom.js?v=20260812-5';
+import { DAYS, MONTHS, state } from './state.js?v=20260813-1';
+import { clearElement, element, appendText } from './dom.js?v=20260813-1';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -614,4 +614,29 @@ export function renderForecastTable(forecast) {
         row.firstElementChild.firstChild?.replaceWith(element('strong', '', item.month_name));
         tbody.append(row);
     });
+}
+
+export function renderExcelTable(vacations) {
+    const table = document.createElement('table');
+    const head = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['Name', 'Start Date', 'End Date', 'Days', 'Hours', 'Type'].forEach(value => {
+        appendText(headerRow, 'th', '', value);
+    });
+    head.append(headerRow);
+    const body = document.createElement('tbody');
+    vacations.forEach(vacation => {
+        const row = document.createElement('tr');
+        [
+            vacation.name,
+            vacation.start_date,
+            vacation.end_date,
+            vacation.days,
+            vacation.hours,
+            leaveTypeInfo(vacation.type).label
+        ].forEach(value => appendText(row, 'td', '', value));
+        body.append(row);
+    });
+    table.append(head, body);
+    return table.outerHTML;
 }

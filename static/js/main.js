@@ -5,17 +5,16 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260812-5';
+} from './modules/state.js?v=20260813-1';
 import {
     announce,
     closeDialog,
-    escapeHtml,
     openDialog,
     reportError,
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260812-5';
+} from './modules/dom.js?v=20260813-1';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -29,25 +28,26 @@ import {
     renderStoredNotes as renderStoredNotesDom,
     renderMultiYearSummary as renderMultiYearSummaryDom,
     renderHeatmap as renderHeatmapDom,
-    renderForecastTable as renderForecastTableDom
-} from './modules/rendering.js?v=20260812-5';
+    renderForecastTable as renderForecastTableDom,
+    renderExcelTable
+} from './modules/rendering.js?v=20260813-1';
 import {
     dismissNotification,
     generateNotifications,
     visibleNotifications
-} from './modules/notifications.js?v=20260812-5';
+} from './modules/notifications.js?v=20260813-1';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260812-5';
-import { generateSuggestions } from './modules/suggestions.js?v=20260812-5';
-import { configWarnings } from './modules/settings.js?v=20260812-5';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260812-5';
+} from './modules/calendar.js?v=20260813-1';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-1';
+import { configWarnings } from './modules/settings.js?v=20260813-1';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-1';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260812-5';
+} from './modules/forecast.js?v=20260813-1';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -841,15 +841,8 @@ function setupDataTransfer() {
     });
     excelExportLink?.addEventListener('click', event => {
         event.preventDefault();
-        // Excel export intentionally uses fixed table markup; each cell is escaped.
-        const rows = [
-            ['Name', 'Start Date', 'End Date', 'Days', 'Hours', 'Type'],
-            ...state.vacations.map(v => [
-                v.name, v.start_date, v.end_date, v.days, v.hours, PTO.leaveType(v.type).label
-            ])
-        ].map(row => `<tr>${row.map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
         downloadText(
-            `<table><thead>${rows.split('</tr>')[0]}</tr></thead><tbody>${rows.split('</tr>').slice(1).join('</tr>')}</tbody></table>`,
+            renderExcelTable(state.vacations),
             `pto-tracker-${getTodayIsoDate()}.xls`,
             'application/vnd.ms-excel'
         );
