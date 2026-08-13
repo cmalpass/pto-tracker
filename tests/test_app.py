@@ -37,6 +37,42 @@ async def test_dashboard_and_forecast(browser):
         await context.close()
 
 
+async def test_year_at_a_glance_and_forecast_period_detail(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.wait_for_selector("#year-at-a-glance .planning-month")
+        assert await page.locator("#year-at-a-glance .planning-month").count() == 12
+        assert await page.locator("#year-at-a-glance").get_by_text("Accrual milestone").count() > 0
+        await page.click("button:has-text('Forecast')")
+        await page.wait_for_selector(".forecast-table tbody tr")
+        await page.locator(".forecast-period-button").first.click()
+        detail = page.locator("#forecast-period-detail")
+        assert await detail.is_visible()
+        assert "forecast details" in (await detail.inner_text()).lower()
+    finally:
+        await context.close()
+
+
+async def test_vacation_what_if_preview_uses_analysis_state(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("button:has-text('Vacations')")
+        await page.click("#btn-add-vacation")
+        await page.fill("input[name='name']", "What-if Trip")
+        await page.fill("input[name='start_date']", "2026-12-01")
+        await page.fill("input[name='end_date']", "2026-12-01")
+        preview = page.locator("#vacation-scenario-preview")
+        await page.wait_for_function(
+            "() => !document.querySelector('#vacation-scenario-preview').hidden"
+        )
+        assert "Projected balance after saving" in await preview.inner_text()
+        assert await preview.get_attribute("data-state") in {"ready", "risk", "blocked"}
+    finally:
+        await context.close()
+
+
 async def test_smart_notifications_generate_and_link_to_actions(browser):
     context, page = await new_page(browser)
     try:
@@ -501,6 +537,8 @@ async def main():
         browser = await playwright.chromium.launch()
         tests = [
             test_dashboard_and_forecast,
+            test_year_at_a_glance_and_forecast_period_detail,
+            test_vacation_what_if_preview_uses_analysis_state,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,

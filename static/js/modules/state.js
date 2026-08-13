@@ -59,6 +59,8 @@ export const state = {
     config: {},
     vacations: [],
     forecast: [],
+    forecastSummary: null,
+    yearAtAGlance: null,
     calendarEvents: {},
     currentYear: new Date().getFullYear(),
     currentMonth: new Date().getMonth(),

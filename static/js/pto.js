@@ -659,6 +659,89 @@
         });
     }
 
+    function generateAccrualMilestones(year, config) {
+        const normalized = normalizedConfig(config);
+        const start = parseCanonicalDate(normalized.accrual_start_date);
+        const yearStart = dateOf(year, 1, 1);
+        const yearEnd = dateOf(year, 12, 31);
+        const periodDays = 365.25 / normalized.pay_periods_per_year;
+        const firstPeriod = Math.max(1, Math.ceil(daysBetween(start, yearStart) / periodDays));
+        const lastPeriod = Math.ceil(daysBetween(start, yearEnd) / periodDays);
+        const milestones = [];
+        for (let period = firstPeriod; period <= lastPeriod; period += 1) {
+            const date = addDays(start, Math.round(period * periodDays));
+            if (date < yearStart) continue;
+            if (date > yearEnd) break;
+            milestones.push({
+                date: formatDate(date),
+                amount: round2(normalized.pto_accrual_per_pay_period * vestingMultiplier(date, normalized)),
+                unit: normalized.pto_accrual_type === 'hours' ? 'hours' : 'days'
+            });
+        }
+        return milestones;
+    }
+
+    function generateYearAtAGlance(year, config, vacations) {
+        if (!Number.isInteger(Number(year))) throw new TypeError('year must be an integer');
+        const normalized = normalizedConfig(config);
+        const forecast = generateYearlyForecast(Number(year), normalized, vacations);
+        const holidays = getHolidays(Number(year), normalized);
+        const milestones = generateAccrualMilestones(Number(year), normalized);
+        const yearSummary = generateMultiYearForecast(Number(year), 1, normalized, vacations)[0];
+        const unit = normalized.pto_accrual_type === 'hours' ? 'hours' : 'days';
+        const months = forecast.map((entry, index) => {
+            const monthNumber = index + 1;
+            const prefix = `${Number(year)}-${String(monthNumber).padStart(2, '0')}`;
+            const monthHolidays = Object.entries(holidays)
+                .filter(([date]) => date.startsWith(prefix))
+                .map(([date, name]) => ({ date, name }));
+            const monthVacations = (vacations || [])
+                .filter(item => item && item.start_date <= `${prefix}-31`
+                    && item.end_date >= `${prefix}-01`)
+                .map(item => ({
+                    id: item.id,
+                    name: item.name,
+                    type: normalizeLeaveType(item.type),
+                    start_date: item.start_date,
+                    end_date: item.end_date,
+                    days: numberValue(item.days, 0),
+                    hours: numberValue(item.hours, 0)
+                }));
+            const monthMilestones = milestones.filter(item => item.date.startsWith(prefix));
+            const annotations = [];
+            if (entry.limit > 0 && entry.balance >= entry.limit - 1e-9) {
+                annotations.push({
+                    type: 'cap',
+                    label: `At policy cap (${entry.limit.toFixed(1)} ${unit})`
+                });
+            }
+            if (monthNumber === 12 && yearSummary.forfeited > 0) {
+                annotations.push({
+                    type: 'forfeiture',
+                    label: `${yearSummary.forfeited.toFixed(1)} ${unit} at risk of forfeiture`
+                });
+            }
+            return {
+                month: entry.month,
+                month_number: monthNumber,
+                month_name: entry.month_name,
+                forecast: entry,
+                holidays: monthHolidays,
+                vacations: monthVacations,
+                accrual_milestones: monthMilestones,
+                annotations
+            };
+        });
+        return {
+            year: Number(year),
+            unit,
+            limit: yearSummary.limit,
+            year_end_balance: yearSummary.year_end_balance,
+            year_end_forfeited: yearSummary.forfeited,
+            months
+        };
+    }
+
     function bookingAmount(days, hours, config) {
         const normalized = normalizedConfig(config);
         const totalHours = (Number(days) * normalized.pto_hours_per_day) + Number(hours);
@@ -757,7 +840,14 @@
         return {
             warnings,
             hints: findShiftSavings(startDate, endDate, normalized),
+            balance_before: round2(current),
             balance_after: round2(balanceAfter),
+            year_end_balance_before: round2(Math.max(0, endBalance.accrued - endBalance.used)),
+            year_end_balance_after: round2(Math.max(0, endBalance.accrued - endBalance.used - requested)),
+            forfeit_before: round2(baselineForfeit),
+            forfeit_after: round2(proposedForfeit),
+            forfeit_delta: round2(proposedForfeit - baselineForfeit),
+            limit: round2(endBalance.limit),
             pto_days_charged: round2(requestedDays),
             pto_hours_charged: round2(requestedHours),
             unit
@@ -1188,6 +1278,7 @@
         calculateBalanceOnDate,
         generateYearlyForecast,
         generateMultiYearForecast,
+        generateYearAtAGlance,
         detectVacationConflicts,
         analyzeVacation,
         generateVacationSuggestions,

@@ -214,6 +214,38 @@ test('calculates conflicts, balances, forecasts, suggestions, and heatmap', () =
     assert.equal(Array.isArray(suggestions.suggestions), true);
 });
 
+test('builds year-at-a-glance planning data and scenario projections', () => {
+    const riskConfig = {
+        ...config,
+        pto_carryover_limit: 1,
+        pto_lose_above_limit: true
+    };
+    const vacation = {
+        id: 9,
+        name: 'Summer planning',
+        start_date: '2026-07-03',
+        end_date: '2026-07-06',
+        days: 1,
+        hours: 0,
+        type: 'vacation'
+    };
+    const planning = PTO.generateYearAtAGlance(2026, riskConfig, [vacation]);
+    assert.equal(planning.months.length, 12);
+    assert.equal(planning.months[6].vacations[0].name, 'Summer planning');
+    assert.ok(planning.months[6].holidays.some(item => item.date === '2026-07-03'));
+    assert.ok(planning.months[0].accrual_milestones.length > 0);
+    assert.ok(planning.months.some(month => month.annotations.some(item => item.type === 'cap')));
+    assert.ok(planning.months[11].annotations.some(item => item.type === 'forfeiture'));
+
+    const scenario = PTO.analyzeVacation(
+        '2026-12-01', '2026-12-01', 1, 0, riskConfig, [], null
+    );
+    assert.equal(scenario.unit, 'days');
+    assert.equal(scenario.balance_after, scenario.balance_before - 1);
+    assert.equal(scenario.forfeit_after, scenario.forfeit_before - 1);
+    assert.ok(Object.hasOwn(scenario, 'limit'));
+});
+
 test('persists and round-trips versioned browser backups', async () => {
     await PTOStore.clear('config');
     await PTOStore.clear('vacations');
