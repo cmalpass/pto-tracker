@@ -92,6 +92,10 @@ With the app running at port 5000, run the browser checks:
 python tests/test_app.py
 ```
 
+To capture review screenshots against another local port, set
+`PTO_TEST_BASE_URL` before running `screenshot.py`. Screenshots are generated
+under the ignored `screenshots/` directory and are not source artifacts.
+
 ## Docker
 
 ```bash

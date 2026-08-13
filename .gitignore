@@ -9,4 +9,6 @@ instance/
 *.mp4
 *.png
 screenshots/
+flask.log
+output.json
 node_modules/

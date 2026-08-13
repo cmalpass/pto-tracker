@@ -2,11 +2,15 @@
 
 ## Project Context
 
-- Stack: Flask backend, SQLite persistence, vanilla JS frontend.
+- Stack: Flask static app server, browser-local IndexedDB/localStorage persistence, vanilla JS frontend.
 - Main server entry point: `app.py`.
 - Templates: `templates/index.html`.
-- Static assets: `static/css/style.css`, `static/js/app.js`.
+- Static assets: `static/css/style.css`, `static/js/app.js`, `static/js/main.js`, and native ES modules under `static/js/modules/`.
 - Tests: `tests/test_app.py` (Playwright-style browser checks).
+
+All PTO data and calculations live in the browser. Flask serves the application
+shell and static assets only; persistence is handled by the browser storage
+adapter.
 
 ## Local Commands
 
@@ -28,6 +32,6 @@
 
 ## Editing Guidance
 
-- Keep API response shapes backward compatible for frontend calls in `static/js/app.js`.
-- Preserve SQLite schema compatibility in `init_db()` unless a migration path is added.
+- Preserve browser backup schema compatibility in `static/js/store.js` unless a migration path is added.
+- Keep the no-build-step, browser-native frontend architecture intact.
 - Keep frontend changes minimal and focused unless explicitly requested.
