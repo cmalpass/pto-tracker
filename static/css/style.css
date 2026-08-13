@@ -1644,77 +1644,6 @@ input:checked + .toggle-slider:before {
     transform: translateX(22px);
 }
 
-/* Responsive */
-@media (max-width: 768px) {
-    .header {
-        padding: 1rem;
-    }
-    
-    .nav-tabs {
-        padding: 0 1rem;
-    }
-    
-    .main-content {
-        padding: 1rem;
-    }
-    
-    .grid-2,
-    .grid-3,
-    .grid-4 {
-        grid-template-columns: 1fr;
-    }
-    
-    .balance-amount {
-        font-size: 2.5rem;
-    }
-    
-    .balance-breakdown {
-        flex-direction: column;
-        gap: 1rem;
-    }
-    
-    .stats-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .cal-day {
-        min-height: 60px;
-        padding: 0.5rem;
-    }
-    
-    .day-event {
-        display: none;
-    }
-
-    .suggestion-item {
-        flex-direction: column;
-    }
-
-    .suggestion-actions {
-        width: 100%;
-        flex-direction: row;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .multi-year-container {
-        grid-template-columns: 1fr;
-    }
-
-    .rollover-arrow {
-        right: auto;
-        left: 50%;
-        top: auto;
-        bottom: -1.5rem;
-        transform: rotate(90deg);
-    }
-
-    .forecast-controls {
-        flex-wrap: wrap;
-        justify-content: flex-end;
-    }
-}
-
 /* Empty State */
 .empty-state {
     text-align: center;
@@ -1898,6 +1827,54 @@ textarea {
 }
 
 @media (max-width: 768px) {
+    /* Consolidated responsive overrides. Keep all mobile layout rules together
+       so later UI refresh styles cannot silently split the cascade. */
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+        grid-template-columns: 1fr;
+    }
+
+    .balance-amount {
+        font-size: 2.5rem;
+    }
+
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .day-event {
+        display: none;
+    }
+
+    .suggestion-item {
+        flex-direction: column;
+    }
+
+    .suggestion-actions {
+        width: 100%;
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .multi-year-container {
+        grid-template-columns: 1fr;
+    }
+
+    .rollover-arrow {
+        right: auto;
+        left: 50%;
+        top: auto;
+        bottom: -1.5rem;
+        transform: rotate(90deg);
+    }
+
+    .forecast-controls {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
     body {
         padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
         overflow-x: hidden;
@@ -2398,13 +2375,6 @@ body {
 .suggestion-item:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow);
-}
-
-@media (max-width: 768px) {
-    .modal {
-        width: 94%;
-        padding: 1.25rem;
-    }
 }
 
 /* Keep the mobile navigation and full-screen modal overrides last. */
