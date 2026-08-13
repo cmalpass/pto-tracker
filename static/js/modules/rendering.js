@@ -442,6 +442,60 @@ export function renderVacationWarnings(warnings = [], hints = []) {
     });
 }
 
+function renderNotificationContent(alert, includeDismiss = true) {
+    const item = element('article', `notification-item ${alert.severity || 'info'}`);
+    item.dataset.fingerprint = alert.fingerprint;
+    appendText(item, 'h3', 'notification-title', alert.title);
+    appendText(item, 'p', 'notification-message', alert.message);
+    if (alert.detail) appendText(item, 'p', 'notification-detail', alert.detail);
+    const actions = element('div', 'notification-actions');
+    if (alert.action) {
+        const action = element('button', 'btn btn-secondary btn-sm notification-action');
+        action.type = 'button';
+        action.dataset.notificationTab = alert.action.tab;
+        if (alert.action.target) action.dataset.notificationTarget = alert.action.target;
+        action.textContent = alert.action.label;
+        actions.append(action);
+    }
+    if (includeDismiss) {
+        const dismiss = element('button', 'notification-dismiss');
+        dismiss.type = 'button';
+        dismiss.dataset.notificationDismiss = alert.fingerprint;
+        dismiss.textContent = 'Dismiss';
+        dismiss.setAttribute('aria-label', `Dismiss ${alert.title}`);
+        actions.append(dismiss);
+    }
+    if (actions.childElementCount) item.append(actions);
+    return item;
+}
+
+export function renderNotifications(alerts = []) {
+    const badge = document.getElementById('notification-count');
+    const button = document.getElementById('btn-notifications');
+    const list = document.getElementById('notification-list');
+    if (!badge || !button || !list) return;
+    list.replaceChildren();
+    if (!alerts.length) {
+        appendText(list, 'p', 'notification-empty', 'You are all caught up. No smart PTO reminders right now.');
+    } else {
+        alerts.forEach(alert => list.append(renderNotificationContent(alert)));
+    }
+    badge.textContent = alerts.length;
+    badge.hidden = alerts.length === 0;
+    button.setAttribute('aria-label', alerts.length
+        ? `Notifications, ${alerts.length} unread`
+        : 'Notifications, no unread alerts');
+}
+
+export function renderDashboardNotification(alert) {
+    const container = document.getElementById('dashboard-notification-alert');
+    if (!container) return;
+    container.replaceChildren();
+    container.hidden = !alert;
+    if (!alert) return;
+    container.append(renderNotificationContent(alert, false));
+}
+
 export async function renderStoredNotes() {
     const list = document.getElementById('notes-list');
     if (!list) return;

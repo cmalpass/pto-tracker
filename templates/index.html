@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PTO Tracker</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260812-5">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260812-6">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -23,6 +23,25 @@
                     PTO Tracker
                 </h1>
                 <div class="header-actions">
+                    <div class="notification-popover">
+                        <button class="btn btn-icon" id="btn-notifications" type="button"
+                                title="Notifications" aria-label="Notifications, no unread alerts"
+                                aria-controls="notification-panel" aria-expanded="false">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+                                <path d="M10 21h4"></path>
+                            </svg>
+                            <span class="notification-count" id="notification-count" hidden>0</span>
+                        </button>
+                        <div class="notification-panel" id="notification-panel" role="region"
+                             aria-labelledby="btn-notifications" hidden>
+                            <div class="notification-panel-header">
+                                <h2>Smart PTO reminders</h2>
+                            </div>
+                            <div id="notification-list" aria-live="polite"></div>
+                        </div>
+                    </div>
                     <button class="btn btn-icon" id="btn-theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <circle cx="12" cy="12" r="4"></circle>
@@ -88,6 +107,8 @@
 
         <main class="main-content">
             <div class="tab-content active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-dashboard-tab" tabindex="0">
+                <section class="dashboard-notification-alert" id="dashboard-notification-alert"
+                         aria-label="Priority PTO reminder" hidden></section>
                 <div class="dashboard-grid">
                     <div class="card balance-card">
                         <div class="card-header">
@@ -224,7 +245,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="card suggestions-card">
+                <div class="card suggestions-card" id="suggestions-card" tabindex="-1">
                     <div class="card-header">
                         <h2>Suggested Vacations</h2>
                         <button class="btn btn-secondary" id="btn-refresh-suggestions">Refresh Suggestions</button>
@@ -580,9 +601,9 @@
     <div id="announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
 
-    <script src="/static/js/store.js?v=20260812-5"></script>
-    <script src="/static/js/pto.js?v=20260812-5"></script>
-    <script src="/static/js/transfer.js?v=20260812-5"></script>
-    <script type="module" src="/static/js/app.js?v=20260812-5"></script>
+    <script src="/static/js/store.js?v=20260812-6"></script>
+    <script src="/static/js/pto.js?v=20260812-6"></script>
+    <script src="/static/js/transfer.js?v=20260812-6"></script>
+    <script type="module" src="/static/js/app.js?v=20260812-6"></script>
 </body>
 </html>
