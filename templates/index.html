@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PTO Tracker</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260812-4">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260812-6">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -23,6 +23,25 @@
                     PTO Tracker
                 </h1>
                 <div class="header-actions">
+                    <div class="notification-popover">
+                        <button class="btn btn-icon" id="btn-notifications" type="button"
+                                title="Notifications" aria-label="Notifications, no unread alerts"
+                                aria-controls="notification-panel" aria-expanded="false">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+                                <path d="M10 21h4"></path>
+                            </svg>
+                            <span class="notification-count" id="notification-count" hidden>0</span>
+                        </button>
+                        <div class="notification-panel" id="notification-panel" role="region"
+                             aria-labelledby="btn-notifications" hidden>
+                            <div class="notification-panel-header">
+                                <h2>Smart PTO reminders</h2>
+                            </div>
+                            <div id="notification-list" aria-live="polite"></div>
+                        </div>
+                    </div>
                     <button class="btn btn-icon" id="btn-theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <circle cx="12" cy="12" r="4"></circle>
@@ -88,6 +107,8 @@
 
         <main class="main-content">
             <div class="tab-content active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-dashboard-tab" tabindex="0">
+                <section class="dashboard-notification-alert" id="dashboard-notification-alert"
+                         aria-label="Priority PTO reminder" hidden></section>
                 <div class="dashboard-grid">
                     <div class="card balance-card">
                         <div class="card-header">
@@ -142,6 +163,14 @@
                         </div>
                     </div>
 
+                    <div class="card type-breakdown-card">
+                        <div class="card-header">
+                            <h2>Used by Leave Type</h2>
+                            <span class="section-hint">Current year</span>
+                        </div>
+                        <div id="type-breakdown" class="type-breakdown" aria-live="polite"></div>
+                    </div>
+
                     <div class="card accrual-card">
                         <div class="card-header">
                             <h2>Accrual Info</h2>
@@ -188,6 +217,9 @@
                     <div class="calendar-legend">
                         <span class="legend-item"><span class="legend-color holiday"></span> Holiday</span>
                         <span class="legend-item"><span class="legend-color vacation"></span> Vacation</span>
+                        <span class="legend-item"><span class="legend-color leave-type-sick"></span> Sick</span>
+                        <span class="legend-item"><span class="legend-color leave-type-personal"></span> Personal</span>
+                        <span class="legend-item"><span class="legend-color leave-type-holiday"></span> Holiday leave</span>
                         <span class="legend-item"><span class="legend-color today"></span> Today</span>
                     </div>
                 </div>
@@ -213,7 +245,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="card suggestions-card">
+                <div class="card suggestions-card" id="suggestions-card" tabindex="-1">
                     <div class="card-header">
                         <h2>Suggested Vacations</h2>
                         <button class="btn btn-secondary" id="btn-refresh-suggestions">Refresh Suggestions</button>
@@ -400,6 +432,11 @@
                             <input type="number" id="accrual-per-period" name="pto_accrual_per_pay_period" step="0.25" min="0">
                         </div>
                         <div class="form-group">
+                            <label for="hours-per-day">Hours Per Day</label>
+                            <input type="number" id="hours-per-day" name="pto_hours_per_day" step="0.25" min="0.25" required>
+                            <small class="form-help">Used to validate quarter-hour and partial-day bookings.</small>
+                        </div>
+                        <div class="form-group">
                             <label for="settings-pay-periods">Pay Periods Per Year</label>
                             <select id="settings-pay-periods" name="pay_periods_per_year">
                                 <option value="24">24 (Bi-weekly x 2)</option>
@@ -477,6 +514,15 @@
                             <label for="vacation-name">Trip Name</label>
                             <input type="text" id="vacation-name" name="name" placeholder="e.g., Summer Vacation" required>
                         </div>
+                        <div class="form-group">
+                            <label for="vacation-type">Leave Type</label>
+                            <select id="vacation-type" name="type">
+                                <option value="vacation">Vacation</option>
+                                <option value="sick">Sick</option>
+                                <option value="personal">Personal</option>
+                                <option value="holiday">Holiday</option>
+                            </select>
+                        </div>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="vacation-start">Start Date</label>
@@ -491,17 +537,18 @@
                         <div class="form-group">
                             <label class="checkbox-label" for="vacation-auto-days">
                                 <input type="checkbox" id="vacation-auto-days" name="auto_days" checked>
-                                <span>Auto-calculate full-day PTO from date range</span>
+                                <span>Use all business days in date range</span>
                             </label>
                         </div>
                         <div class="form-group">
-                            <label for="vacation-days">Days (auto-calculated)</label>
+                            <label for="vacation-days">PTO days (fractional allowed)</label>
                             <input type="number" id="vacation-days" name="days" step="0.25" min="0" readonly>
                         </div>
                         <div class="form-group">
-                            <label for="vacation-hours">Hours (optional, 0.25 increments)</label>
+                            <label for="vacation-hours">Additional hours (0.25 increments)</label>
                             <input type="number" id="vacation-hours" name="hours" step="0.25" min="0" value="0">
                         </div>
+                        <p class="form-help">For a half-day, turn off the date-range option and enter half a day or the matching hours for your policy.</p>
                         <div class="vacation-preview" id="vacation-preview"></div>
                         <div class="form-actions">
                             <button type="button" class="btn btn-secondary" id="btn-cancel-vacation">Cancel</button>
@@ -534,6 +581,7 @@
                             <tr>
                                 <th scope="col">Status</th>
                                 <th scope="col">Name</th>
+                                <th scope="col">Type</th>
                                 <th scope="col">Dates</th>
                                 <th scope="col">Details</th>
                             </tr>
@@ -553,9 +601,9 @@
     <div id="announcements" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     </div>
 
-    <script src="/static/js/store.js?v=20260812-4"></script>
-    <script src="/static/js/pto.js?v=20260812-4"></script>
-    <script src="/static/js/transfer.js?v=20260812-4"></script>
-    <script type="module" src="/static/js/app.js?v=20260812-4"></script>
+    <script src="/static/js/store.js?v=20260812-6"></script>
+    <script src="/static/js/pto.js?v=20260812-6"></script>
+    <script src="/static/js/transfer.js?v=20260812-6"></script>
+    <script type="module" src="/static/js/app.js?v=20260812-6"></script>
 </body>
 </html>

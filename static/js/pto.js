@@ -15,6 +15,27 @@
         'January', 'February', 'March', 'April', 'May', 'June',
         'July', 'August', 'September', 'October', 'November', 'December'
     ];
+    const LEAVE_TYPES = Object.freeze({
+        vacation: Object.freeze({
+            key: 'vacation', label: 'Vacation', color: '#4f46e5', icon: 'vacation'
+        }),
+        sick: Object.freeze({
+            key: 'sick', label: 'Sick', color: '#dc2626', icon: 'sick'
+        }),
+        personal: Object.freeze({
+            key: 'personal', label: 'Personal', color: '#7c3aed', icon: 'personal'
+        }),
+        holiday: Object.freeze({
+            key: 'holiday', label: 'Holiday', color: '#0891b2', icon: 'holiday'
+        })
+    });
+    const LEAVE_TYPE_ALIASES = Object.freeze({
+        pto: 'vacation',
+        paid_time_off: 'vacation',
+        paid_leave: 'vacation',
+        personal_day: 'personal',
+        public_holiday: 'holiday'
+    });
 
     function parseCanonicalDate(value) {
         if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -69,6 +90,54 @@
     function numberValue(value, fallback) {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function normalizeLeaveType(value) {
+        const candidate = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+        const normalized = LEAVE_TYPE_ALIASES[candidate] || candidate;
+        return Object.prototype.hasOwnProperty.call(LEAVE_TYPES, normalized)
+            ? normalized : 'vacation';
+    }
+
+    function leaveType(value) {
+        return LEAVE_TYPES[normalizeLeaveType(value)];
+    }
+
+    function isQuarterHour(value) {
+        return Math.abs((value * 4) - Math.round(value * 4)) < 1e-9;
+    }
+
+    function normalizeBooking(days, hours, config) {
+        const normalized = normalizedConfig(config);
+        const dayAmount = Number(days);
+        const hourAmount = Number(hours);
+        if (!Number.isFinite(dayAmount) || dayAmount < 0) {
+            throw new TypeError('PTO days must be a non-negative number');
+        }
+        if (!Number.isFinite(hourAmount) || hourAmount < 0) {
+            throw new TypeError('PTO hours must be a non-negative number');
+        }
+        if (!isQuarterHour(hourAmount)) {
+            throw new TypeError('PTO hours must use 0.25-hour increments');
+        }
+        if (hourAmount > normalized.pto_hours_per_day + 1e-9) {
+            throw new RangeError(
+                `PTO hours cannot exceed ${normalized.pto_hours_per_day} hours per day`
+            );
+        }
+        const totalHours = (dayAmount * normalized.pto_hours_per_day) + hourAmount;
+        if (!isQuarterHour(totalHours)) {
+            throw new TypeError(
+                `PTO amount must resolve to quarter-hours using ${normalized.pto_hours_per_day} hours per day`
+            );
+        }
+        return {
+            days: round2(dayAmount),
+            hours: round2(hourAmount),
+            amount: round2(normalized.pto_accrual_type === 'hours'
+                ? totalHours : totalHours / normalized.pto_hours_per_day),
+            total_hours: round2(totalHours)
+        };
     }
 
     function boolValue(value, fallback) {
@@ -467,6 +536,29 @@
         return { days: totalDays, hours: totalHours };
     }
 
+    function getVacationTypeBreakdown(year, config, vacations) {
+        if (!Number.isInteger(Number(year))) throw new TypeError('year must be an integer');
+        const normalized = normalizedConfig(config);
+        const start = `${Number(year)}-01-01`;
+        const end = `${Number(year)}-12-31`;
+        const unit = normalized.pto_accrual_type === 'hours' ? 'hours' : 'days';
+        return Object.values(LEAVE_TYPES).map(type => {
+            const records = (vacations || []).filter(item =>
+                normalizeLeaveType(item?.type ?? item?.leave_type) === type.key
+            );
+            const usage = calculateVacationUsageInRange(start, end, normalized, records);
+            const amount = bookingAmount(usage.days, usage.hours, normalized);
+            return {
+                ...type,
+                records: records.length,
+                days: round2(usage.days),
+                hours: round2(usage.hours),
+                amount: round2(amount),
+                unit
+            };
+        });
+    }
+
     function calculateBalanceOnDate(targetDate, config, vacations) {
         const normalized = normalizedConfig(config);
         const target = parseCanonicalDate(targetDate);
@@ -569,9 +661,9 @@
 
     function bookingAmount(days, hours, config) {
         const normalized = normalizedConfig(config);
+        const totalHours = (Number(days) * normalized.pto_hours_per_day) + Number(hours);
         return normalized.pto_accrual_type === 'hours'
-            ? days * normalized.pto_hours_per_day + hours
-            : days + hours / normalized.pto_hours_per_day;
+            ? totalHours : totalHours / normalized.pto_hours_per_day;
     }
 
     function forfeitAmount(balance, config) {
@@ -618,8 +710,9 @@
         const end = parseCanonicalDate(endDate);
         if (start > end) throw new RangeError('start_date cannot be after end_date');
         const normalized = normalizedConfig(config);
-        const requestedDays = numberValue(days, 0);
-        const requestedHours = numberValue(hours, 0);
+        const booking = normalizeBooking(days, hours, normalized);
+        const requestedDays = booking.days;
+        const requestedHours = booking.hours;
         const overlaps = overlappingVacations(startDate, endDate, vacations, vacationId);
         const withoutEdited = (vacations || []).filter(item => item.id !== vacationId);
         const projected = calculateBalanceOnDate(endDate, normalized, withoutEdited);
@@ -1070,6 +1163,7 @@
     return Object.freeze({
         DEFAULT_TIMEZONE,
         DEFAULT_HOLIDAY_COUNTRY,
+        LEAVE_TYPES,
         isCanonicalDate,
         parseCanonicalDate,
         getConfiguredTimezone,
@@ -1077,6 +1171,8 @@
         getLocalYear,
         vestingMultiplier,
         normalizeHolidayCountry,
+        normalizeLeaveType,
+        leaveType,
         isValidTimezone,
         getUSHolidays,
         getCanadianHolidays,
@@ -1085,7 +1181,10 @@
         getVacationBusinessDays,
         getVacationDays: getVacationBusinessDays,
         calculateAccrualToDate,
+        normalizeBooking,
+        bookingAmount,
         calculateVacationUsageInRange,
+        getVacationTypeBreakdown,
         calculateBalanceOnDate,
         generateYearlyForecast,
         generateMultiYearForecast,

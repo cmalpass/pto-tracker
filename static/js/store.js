@@ -9,12 +9,16 @@
     'use strict';
 
     const DB_NAME = 'pto-tracker';
-    const DB_VERSION = 2;
-    const SCHEMA_VERSION = 2;
+    const DB_VERSION = 3;
+    const SCHEMA_VERSION = 3;
     const DATA_STORES = Object.freeze(['config', 'vacations', 'notes']);
     const STORES = Object.freeze([...DATA_STORES, 'history']);
-    const FALLBACK_KEY = 'pto-tracker:data:v2';
-    const LEGACY_FALLBACK_KEY = 'pto-tracker:data:v1';
+    const FALLBACK_KEY = 'pto-tracker:data:v3';
+    const LEGACY_FALLBACK_KEYS = Object.freeze([
+        'pto-tracker:data:v2',
+        'pto-tracker:data:v1'
+    ]);
+    const LEAVE_TYPES = Object.freeze(['vacation', 'sick', 'personal', 'holiday']);
     let databasePromise;
 
     function clone(value) {
@@ -30,6 +34,48 @@
         return parsed.getUTCFullYear() === year
             && parsed.getUTCMonth() === month - 1
             && parsed.getUTCDate() === day;
+    }
+
+    function normalizeLeaveType(value) {
+        const candidate = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+        const aliases = {
+            pto: 'vacation',
+            paid_time_off: 'vacation',
+            paid_leave: 'vacation',
+            personal_day: 'personal',
+            public_holiday: 'holiday'
+        };
+        const normalized = aliases[candidate] || candidate;
+        return LEAVE_TYPES.includes(normalized) ? normalized : 'vacation';
+    }
+
+    function normalizeQuarterHours(value) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? Math.round(Math.max(0, numeric) * 4) / 4 : 0;
+    }
+
+    function isQuarterHour(value) {
+        return Math.abs((value * 4) - Math.round(value * 4)) < 1e-9;
+    }
+
+    function assertVacationAmount(record, config) {
+        const days = Number(record.days ?? 0);
+        const hours = Number(record.hours ?? 0);
+        const hoursPerDay = Number(config?.pto_hours_per_day) || 8;
+        if (!Number.isFinite(days) || days < 0) {
+            throw new TypeError('Vacation days must be a non-negative number');
+        }
+        if (!Number.isFinite(hours) || hours < 0 || !isQuarterHour(hours)) {
+            throw new TypeError('Vacation hours must use 0.25-hour increments');
+        }
+        if (hours > hoursPerDay + 1e-9) {
+            throw new RangeError(`Vacation hours cannot exceed ${hoursPerDay} hours per day`);
+        }
+        if (!isQuarterHour((days * hoursPerDay) + hours)) {
+            throw new TypeError(
+                `Vacation amount must resolve to quarter-hours using ${hoursPerDay} hours per day`
+            );
+        }
     }
 
     function assertStore(storeName) {
@@ -55,6 +101,15 @@
                     throw new TypeError('timezone must be a valid IANA timezone');
                 }
             }
+            if (record.pto_hours_per_day != null
+                    && (!Number.isFinite(Number(record.pto_hours_per_day))
+                        || Number(record.pto_hours_per_day) <= 0)) {
+                throw new TypeError('pto_hours_per_day must be greater than zero');
+            }
+            if (record.pto_hours_per_day != null
+                    && !isQuarterHour(Number(record.pto_hours_per_day))) {
+                throw new TypeError('pto_hours_per_day must use 0.25-hour increments');
+            }
             record.id = 'config';
         } else if (storeName === 'vacations') {
             if (!isCanonicalDate(record.start_date) || !isCanonicalDate(record.end_date)) {
@@ -66,6 +121,22 @@
             if (record.id != null && (!Number.isInteger(record.id) || record.id < 1)) {
                 throw new TypeError('Vacation id must be a positive integer');
             }
+            if (record.days != null
+                    && (!Number.isFinite(Number(record.days)) || Number(record.days) < 0)) {
+                throw new TypeError('Vacation days must be a non-negative number');
+            }
+            if (record.hours != null
+                    && (!Number.isFinite(Number(record.hours)) || Number(record.hours) < 0)) {
+                throw new TypeError('Vacation hours must be a non-negative number');
+            }
+            if (record.days != null) record.days = Number(record.days);
+            if (record.hours != null) {
+                record.hours = Number(record.hours);
+                if (!isQuarterHour(record.hours)) {
+                    throw new TypeError('Vacation hours must use 0.25-hour increments');
+                }
+            }
+            record.type = normalizeLeaveType(record.type ?? record.leave_type ?? record.category);
         } else if (storeName === 'notes' && !isCanonicalDate(record.date)) {
             throw new TypeError('Note date must use YYYY-MM-DD format');
         } else if (storeName === 'notes'
@@ -87,8 +158,11 @@
 
     function normalizeRecord(storeName, value) {
         const record = clone(value);
-        if (record && (storeName === 'vacations' || storeName === 'notes')
-                && record.deleted_at == null) {
+        if (record && storeName === 'vacations') {
+            record.type = normalizeLeaveType(record.type ?? record.leave_type ?? record.category);
+            if (record.hours != null) record.hours = normalizeQuarterHours(record.hours);
+            if (record.deleted_at == null) record.deleted_at = null;
+        } else if (record && storeName === 'notes' && record.deleted_at == null) {
             record.deleted_at = null;
         }
         return record;
@@ -160,7 +234,8 @@
     function readFallback() {
         const storage = fallbackStorage();
         const currentRaw = storage.getItem(FALLBACK_KEY);
-        const legacyRaw = currentRaw ? null : storage.getItem(LEGACY_FALLBACK_KEY);
+        const legacyKey = LEGACY_FALLBACK_KEYS.find(key => storage.getItem(key));
+        const legacyRaw = currentRaw ? null : (legacyKey ? storage.getItem(legacyKey) : null);
         const raw = currentRaw || legacyRaw;
         if (!raw) {
             return {
@@ -188,7 +263,7 @@
             data.notes = data.notes.map(item => normalizeRecord('notes', item));
             if (legacyRaw) {
                 writeFallback(data);
-                storage.removeItem(LEGACY_FALLBACK_KEY);
+                LEGACY_FALLBACK_KEYS.forEach(key => storage.removeItem(key));
             }
             return data;
         } catch (error) {
@@ -300,6 +375,9 @@
     }
 
     async function put(storeName, value) {
+        if (storeName === 'vacations') {
+            assertVacationAmount(value, await getConfig());
+        }
         const previous = value?.id == null ? null : await getRaw(storeName, value.id);
         const record = await writeRecord(storeName, value);
         if (storeName !== 'history') {
@@ -385,8 +463,8 @@
 
     async function importJSON(input, options) {
         const payload = typeof input === 'string' ? JSON.parse(input) : clone(input);
-        if (!payload || ![1, SCHEMA_VERSION].includes(payload.schemaVersion) || !payload.data) {
-            throw new TypeError(`Unsupported PTO data schema; expected version 1 or ${SCHEMA_VERSION}`);
+        if (!payload || ![1, 2, SCHEMA_VERSION].includes(payload.schemaVersion) || !payload.data) {
+            throw new TypeError(`Unsupported PTO data schema; expected version 1, 2, or ${SCHEMA_VERSION}`);
         }
         if (!Array.isArray(payload.data.vacations) || !Array.isArray(payload.data.notes)) {
             throw new TypeError('Imported vacations and notes must be arrays');
@@ -396,6 +474,8 @@
             vacations: (payload.data.vacations || []).map(item => validateRecord('vacations', item)),
             notes: (payload.data.notes || []).map(item => validateRecord('notes', item))
         };
+        const importConfig = incoming.config || await getConfig() || {};
+        incoming.vacations.forEach(record => assertVacationAmount(record, importConfig));
         const replace = !options || options.replace !== false;
         if (!replace) {
             if (incoming.config) await put('config', incoming.config);
@@ -460,6 +540,7 @@
         SCHEMA_VERSION,
         STORES,
         isCanonicalDate,
+        normalizeLeaveType,
         get,
         put,
         list,

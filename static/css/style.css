@@ -85,6 +85,131 @@ body {
     align-items: center;
 }
 
+.notification-popover {
+    position: relative;
+}
+
+.notification-count {
+    position: absolute;
+    top: 0.15rem;
+    right: 0.1rem;
+    min-width: 1.15rem;
+    padding: 0.05rem 0.25rem;
+    border: 2px solid var(--card);
+    border-radius: var(--radius-full);
+    background: var(--danger);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.1;
+    text-align: center;
+}
+
+.notification-panel {
+    position: absolute;
+    top: calc(100% + 0.75rem);
+    right: 0;
+    z-index: 120;
+    width: min(23rem, calc(100vw - 2rem));
+    max-height: min(34rem, calc(100vh - 6rem));
+    overflow-y: auto;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    box-shadow: var(--shadow-lg);
+}
+
+.notification-panel-header {
+    margin-bottom: 0.75rem;
+}
+
+.notification-panel-header h2 {
+    font-size: 1rem;
+}
+
+.notification-item {
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--border);
+}
+
+.notification-item:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.notification-item.critical {
+    border-left: 3px solid var(--danger);
+    padding-left: 0.75rem;
+}
+
+.notification-item.warning {
+    border-left: 3px solid var(--warning);
+    padding-left: 0.75rem;
+}
+
+.notification-title {
+    font-size: 0.95rem;
+    color: var(--text);
+}
+
+.notification-message {
+    margin-top: 0.2rem;
+    font-size: 0.88rem;
+}
+
+.notification-detail {
+    margin-top: 0.2rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.notification-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.65rem;
+}
+
+.notification-dismiss {
+    min-height: 44px;
+    padding: 0.35rem 0.5rem;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    text-decoration: underline;
+}
+
+.notification-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.dashboard-notification-alert {
+    margin-bottom: 1.5rem;
+}
+
+.dashboard-notification-alert .notification-item {
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--primary);
+    border-radius: var(--radius);
+    background: var(--card);
+    box-shadow: var(--shadow);
+}
+
+.dashboard-notification-alert .notification-item.critical {
+    border-left-color: var(--danger);
+}
+
+.dashboard-notification-alert .notification-item.warning {
+    border-left-color: var(--warning);
+}
+
 /* Navigation Tabs */
 .nav-tabs {
     display: flex;
@@ -264,6 +389,38 @@ body {
     font-size: 0.85rem;
     color: var(--text-muted);
     margin-top: 0.25rem;
+}
+
+.type-breakdown {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.type-breakdown-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.55rem 0.7rem;
+    border-left: 4px solid var(--leave-color, var(--primary));
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+}
+
+.type-breakdown-label {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 0;
+}
+
+.type-breakdown-label small {
+    color: var(--text-muted);
+}
+
+.type-breakdown-amount {
+    color: var(--text);
+    white-space: nowrap;
 }
 
 /* Buttons */
@@ -466,6 +623,18 @@ body {
     color: var(--primary);
 }
 
+.day-event.leave-type-sick {
+    color: #b91c1c;
+}
+
+.day-event.leave-type-personal {
+    color: #6d28d9;
+}
+
+.day-event.leave-type-holiday {
+    color: #0e7490;
+}
+
 /* Vacation Items */
 .vacation-list {
     display: flex;
@@ -501,6 +670,18 @@ body {
     flex-shrink: 0;
 }
 
+.vacation-icon.leave-type-sick {
+    background: #dc2626;
+}
+
+.vacation-icon.leave-type-personal {
+    background: #7c3aed;
+}
+
+.vacation-icon.leave-type-holiday {
+    background: #0891b2;
+}
+
 .vacation-info {
     flex: 1;
 }
@@ -508,6 +689,49 @@ body {
 .vacation-name {
     font-weight: 600;
     font-size: 1rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.vacation-title {
+    min-width: 0;
+}
+
+.leave-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    width: fit-content;
+    padding: 0.12rem 0.4rem;
+    border-radius: var(--radius-full);
+    border: 1px solid currentColor;
+    color: var(--leave-color, var(--primary));
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.leave-type-badge svg {
+    flex: 0 0 auto;
+}
+
+.leave-type-vacation {
+    --leave-color: #4f46e5;
+}
+
+.leave-type-sick {
+    --leave-color: #dc2626;
+}
+
+.leave-type-personal {
+    --leave-color: #7c3aed;
+}
+
+.leave-type-holiday {
+    --leave-color: #0891b2;
 }
 
 .vacation-dates {
@@ -1294,6 +1518,21 @@ body {
     color: var(--primary);
 }
 
+.mini-cal-day.leave-type-sick {
+    background: rgba(220, 38, 38, 0.12);
+    color: #b91c1c;
+}
+
+.mini-cal-day.leave-type-personal {
+    background: rgba(124, 58, 237, 0.12);
+    color: #6d28d9;
+}
+
+.mini-cal-day.leave-type-holiday {
+    background: rgba(8, 145, 178, 0.12);
+    color: #0e7490;
+}
+
 .mini-cal-day.other-month {
     opacity: 0.4;
 }
@@ -1557,6 +1796,21 @@ input:checked + .toggle-slider:before {
     background: rgba(99, 102, 241, 0.1);
 }
 
+.legend-color.leave-type-sick {
+    border-color: #dc2626;
+    background: rgba(220, 38, 38, 0.12);
+}
+
+.legend-color.leave-type-personal {
+    border-color: #7c3aed;
+    background: rgba(124, 58, 237, 0.12);
+}
+
+.legend-color.leave-type-holiday {
+    border-color: #0891b2;
+    background: rgba(8, 145, 178, 0.12);
+}
+
 .legend-color.today {
     border-color: var(--primary);
     background: var(--primary);
@@ -1664,6 +1918,12 @@ textarea {
 
     .header-actions {
         gap: 0.25rem;
+    }
+
+    .notification-panel {
+        position: fixed;
+        top: 4.25rem;
+        right: 0.75rem;
     }
 
     .nav-tabs {

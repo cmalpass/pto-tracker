@@ -1,4 +1,4 @@
-import { state } from './state.js?v=20260812-4';
+import { state } from './state.js?v=20260812-5';
 
 export function calendarData(year, month) {
     const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
@@ -7,7 +7,11 @@ export function calendarData(year, month) {
         .map(([date, name]) => ({ date, name, type: 'holiday' }));
     const vacations = state.vacations
         .filter(item => item.start_date <= `${monthPrefix}-31` && item.end_date >= `${monthPrefix}-01`)
-        .map(item => ({ ...item, type: 'vacation' }));
+        .map(item => ({
+            ...item,
+            type: 'vacation',
+            leave_type: globalThis.PTO.normalizeLeaveType(item.type)
+        }));
     return { events: [...holidays, ...vacations] };
 }
 

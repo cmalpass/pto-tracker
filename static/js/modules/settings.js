@@ -9,6 +9,13 @@ export function configWarnings(config) {
     if (Number(config.pto_carryover_limit) < 0) {
         warnings.push({ severity: 'error', message: 'Carryover limit cannot be negative.' });
     }
+    if (Number(config.pto_hours_per_day) <= 0) {
+        warnings.push({ severity: 'error', message: 'Hours per day must be greater than zero.' });
+    }
+    if (Math.abs((Number(config.pto_hours_per_day) * 4)
+            - Math.round(Number(config.pto_hours_per_day) * 4)) > 1e-9) {
+        warnings.push({ severity: 'error', message: 'Hours per day must use 0.25-hour increments.' });
+    }
     if (!globalThis.PTO.isValidTimezone(config.timezone)) {
         warnings.push({ severity: 'error', message: 'Timezone must be a valid IANA timezone.' });
     }

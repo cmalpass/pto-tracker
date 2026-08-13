@@ -75,7 +75,9 @@ export const state = {
         localStorage.getItem('pto-suggestion-filters') || '{"categories":[],"sortBy":"impact"}'
     ),
     suggestionAnalysisTimer: null,
-    vacationAnalysisRequestId: 0
+    vacationAnalysisRequestId: 0,
+    notificationAlerts: [],
+    notifications: []
 };
 
 export const MONTHS = [
