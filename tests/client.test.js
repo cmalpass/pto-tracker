@@ -235,6 +235,27 @@ test('keeps hours-mode usage and forecast values in hours', () => {
     assert.ok(Math.abs(august.balance - (august.accrued - 8)) < 0.01);
 });
 
+test('uses the hours-mode carryover limit without converting it twice', () => {
+    const hoursConfig = {
+        ...config,
+        accrual_method: 'full',
+        pto_accrual_type: 'hours',
+        pto_accrual_per_pay_period: 8,
+        pto_carryover_limit: 40
+    };
+    const yearEnd = PTO.calculateBalanceOnDate('2026-12-31', hoursConfig, []);
+    const expectedRisk = Math.max(0, yearEnd.balance - hoursConfig.pto_carryover_limit);
+    const suggestions = PTO.generateVacationSuggestions(2026, hoursConfig, [], {
+        today: '2026-01-01'
+    });
+
+    assert.equal(PTO.analyzeVacation(
+        '2026-01-05', '2026-01-05', 1, 0, hoursConfig, []
+    ).warnings.some(warning => warning.type === 'policy_limit'), true);
+    assert.equal(suggestions.forfeit_risk, expectedRisk);
+    assert.equal(suggestions.forfeit_risk > 0, true);
+});
+
 test('starts forecasts from an entered baseline and ignores prior history', () => {
     const baselineConfig = {
         ...config,
