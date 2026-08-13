@@ -214,6 +214,92 @@ test('calculates conflicts, balances, forecasts, suggestions, and heatmap', () =
     assert.equal(Array.isArray(suggestions.suggestions), true);
 });
 
+test('keeps hours-mode usage and forecast values in hours', () => {
+    const hoursConfig = {
+        ...config,
+        pto_accrual_type: 'hours',
+        pto_accrual_per_pay_period: 8
+    };
+    const vacation = {
+        start_date: '2026-08-03',
+        end_date: '2026-08-03',
+        days: 1,
+        hours: 0
+    };
+    const balance = PTO.calculateBalanceOnDate('2026-12-31', hoursConfig, [vacation]);
+    const august = PTO.generateYearlyForecast(2026, hoursConfig, [vacation])[7];
+    assert.equal(balance.used, 8);
+    assert.equal(balance.limit, 40);
+    assert.equal(balance.used_days, 1);
+    assert.equal(august.used, 8);
+    assert.ok(Math.abs(august.balance - (august.accrued - 8)) < 0.01);
+});
+
+test('starts forecasts from an entered baseline and ignores prior history', () => {
+    const baselineConfig = {
+        ...config,
+        forecast_baseline_enabled: true,
+        forecast_baseline_date: '2026-08-01',
+        forecast_baseline_balance: 10
+    };
+    const vacations = [
+        { start_date: '2026-07-01', end_date: '2026-07-01', days: 5, hours: 0 },
+        { start_date: '2026-08-03', end_date: '2026-08-03', days: 2, hours: 0 }
+    ];
+    const beforeBaseline = PTO.calculateBalanceOnDate('2026-07-31', baselineConfig, vacations);
+    const august = PTO.calculateBalanceOnDate('2026-08-31', baselineConfig, vacations);
+    assert.equal(beforeBaseline.balance, 0);
+    assert.equal(august.used, 2);
+    assert.ok(august.balance < 10 + august.accrued);
+});
+
+test('classifies usage using inclusive per-year PTO boundaries', () => {
+    const boundaryConfig = {
+        ...config,
+        pto_year_boundaries: [{ year: 2026, final_date: '2026-12-26' }]
+    };
+    const vacations = [
+        { type: 'vacation', start_date: '2026-12-26', end_date: '2026-12-26', days: 1, hours: 0 },
+        { type: 'vacation', start_date: '2026-12-27', end_date: '2026-12-27', days: 1, hours: 0 }
+    ];
+    assert.equal(PTO.getPtoYearForDate('2026-12-26', boundaryConfig), 2026);
+    assert.equal(PTO.getPtoYearForDate('2026-12-27', boundaryConfig), 2027);
+    assert.equal(PTO.getVacationTypeBreakdown(2026, boundaryConfig, vacations)[0].days, 1);
+    assert.equal(PTO.getVacationTypeBreakdown(2027, boundaryConfig, vacations)[0].days, 1);
+});
+
+test('applies rollover and cap at a configured PTO year boundary', () => {
+    const boundaryConfig = {
+        ...config,
+        accrual_method: 'full',
+        pto_accrual_per_pay_period: 26,
+        pto_carryover_limit: 5,
+        pto_year_boundaries: [{ year: 2026, final_date: '2026-12-26' }]
+    };
+    const end = PTO.calculateBalanceOnDate('2026-12-26', boundaryConfig, []);
+    const next = PTO.calculateBalanceOnDate('2026-12-27', boundaryConfig, []);
+    assert.ok(end.balance > 5);
+    assert.equal(next.carry, 5);
+    assert.ok(next.balance < end.balance);
+});
+
+test('ends yearly forecasts at the configured inclusive boundary', () => {
+    const boundaryConfig = {
+        ...config,
+        pto_year_boundaries: [{ year: 2026, final_date: '2026-12-26' }]
+    };
+    const vacation = {
+        start_date: '2026-12-26',
+        end_date: '2026-12-26',
+        days: 1,
+        hours: 0
+    };
+    const forecast = PTO.generateMultiYearForecast(2026, 2, boundaryConfig, [vacation]);
+    assert.equal(forecast[0].year_end_balance, forecast[0].monthly_balances[11].balance);
+    assert.equal(forecast[0].total_used, 1);
+    assert.equal(forecast[1].total_used, 0);
+});
+
 test('persists and round-trips versioned browser backups', async () => {
     await PTOStore.clear('config');
     await PTOStore.clear('vacations');
