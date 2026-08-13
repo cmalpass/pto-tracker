@@ -101,3 +101,96 @@ under the ignored `screenshots/` directory and are not source artifacts.
 ```bash
 docker compose up --build
 ```
+
+The Compose service listens on `http://localhost:5000`, runs Gunicorn with two
+workers, and serves the same static browser application as the development
+server. The image uses a non-root user and installs only the production
+dependencies. Stop it with `docker compose down`.
+
+## Using PTO Tracker
+
+### First-run setup
+
+1. Open **Settings** and choose the policy preset that most closely matches
+   your employer's PTO policy, or enter the values manually.
+2. Confirm the accrual unit (days or hours), hours per day, pay periods per
+   year, carryover rules, vesting schedule, holidays, and IANA timezone.
+3. Save the policy. The dashboard immediately recalculates the balance,
+   accrual forecast, and remaining days.
+
+### Planning time off
+
+- Use **Calendar** to inspect holidays, scheduled leave, and open dates.
+- Add vacations from the **Vacations** tab. Date ranges default to business
+  days and support fractional days or quarter-hour increments.
+- Use **Best Weeks** and **Forecast** to compare suggested booking windows and
+  see projected balances through the year.
+- Select a leave type (vacation, sick, personal, or holiday) so reports and
+  calendar legends remain accurate.
+
+### Backups and exchange
+
+All records stay in the browser. Use the JSON backup action before clearing
+site data or moving to another device. CSV and all-day ICS exports are useful
+for sharing with other tools; CSV/ICS imports show a validation preview,
+identify duplicates, and only write records after confirmation.
+
+## Data and privacy model
+
+PTO Tracker is intentionally server-light: Flask serves the HTML, CSS, and
+JavaScript shell, while calculations and persistence happen in the browser.
+No account, analytics pipeline, server database, calendar subscription, or
+external calendar API is included. Browser storage is profile- and
+device-specific, so backups are the user's responsibility. See the in-app
+backup note before clearing site data.
+
+## Project layout
+
+```text
+app.py                    Flask static server and security headers
+templates/index.html      Accessible application shell and dialogs
+static/js/store.js        IndexedDB/localStorage persistence layer
+static/js/pto.js          Pure PTO calculations and policy logic
+static/js/transfer.js     CSV/ICS parsing, validation, and exports
+static/js/app.js          Native-module application entry point
+static/js/modules/        State, rendering, calendar, forecast, and settings
+static/css/style.css      Responsive UI and design tokens
+tests/                    Node client tests, Python checks, and Playwright suite
+docs/screenshots/         Curated screenshots used in this README
+```
+
+## Screenshots and walkthrough
+
+The following images were captured from the current application using the
+repository's `screenshot.py` helper with isolated browser data and representative
+sample PTO records.
+
+| Dashboard | Calendar |
+| --- | --- |
+| ![PTO Tracker dashboard](docs/screenshots/01-dashboard.png) | ![PTO Tracker calendar](docs/screenshots/02-calendar.png) |
+
+| Vacations | Forecast |
+| --- | --- |
+| ![PTO Tracker vacations](docs/screenshots/03-vacations.png) | ![PTO Tracker forecast](docs/screenshots/04-forecast.png) |
+
+| Settings | Mobile layout |
+| --- | --- |
+| ![PTO Tracker settings](docs/screenshots/05-settings.png) | ![PTO Tracker mobile layout](docs/screenshots/07-mobile.png) |
+
+For a short end-to-end walkthrough, see the captured [PTO Tracker demo video](docs/pto-tracker-demo.webm).
+Regenerate the visual documentation with:
+
+```bash
+PTO_TEST_BASE_URL=http://127.0.0.1:5000 \\
+PTO_VIDEO_PATH=docs/pto-tracker-demo.webm \\
+python screenshot.py
+```
+
+## Contributing and license
+
+Bug reports and maintenance improvements are welcome. Keep changes focused on
+correctness, accessibility, usability, maintainability, or documentation;
+avoid committing browser data, generated logs, or local environment files.
+Run the relevant client and browser tests before opening a pull request.
+
+This project is released under the [MIT License](LICENSE).
