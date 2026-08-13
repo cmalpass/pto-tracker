@@ -45,6 +45,25 @@ async def test_dashboard_and_forecast(browser):
         await context.close()
 
 
+async def test_year_at_a_glance_and_bounded_what_if(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("button:has-text('Planning')")
+        await page.wait_for_selector("#planning-grid .planning-month")
+        assert await page.locator("#planning-grid .planning-month").count() == 12
+        assert await page.locator("#planning-summary").get_attribute("aria-live") == "polite"
+        await page.locator("#what-if-amount").fill("10")
+        assert "down 10.0" in await page.locator("#what-if-result").inner_text()
+        await page.locator("#planning-grid .planning-month").nth(6).click()
+        assert await page.locator("#tab-calendar-tab").get_attribute("aria-selected") == "true"
+        await page.click("button:has-text('Forecast')")
+        await page.wait_for_selector(".forecast-annotation")
+        assert await page.locator(".forecast-annotation").count() == 12
+    finally:
+        await context.close()
+
+
 async def test_smart_notifications_generate_and_link_to_actions(browser):
     context, page = await new_page(browser)
     try:
@@ -424,7 +443,7 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
     try:
         await open_app(page)
         tabs = page.locator("[role='tab']")
-        assert await tabs.count() == 5
+        assert await tabs.count() == 6
         await tabs.nth(0).focus()
         await page.keyboard.press("ArrowRight")
         assert await page.locator("#tab-calendar-tab").get_attribute("aria-selected") == "true"
@@ -597,6 +616,7 @@ async def main():
         browser = await playwright.chromium.launch()
         tests = [
             test_dashboard_and_forecast,
+            test_year_at_a_glance_and_bounded_what_if,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,

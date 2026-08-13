@@ -621,6 +621,75 @@ export function renderForecastTable(forecast) {
     });
 }
 
+export function renderForecastAnnotations(forecast, config, vacations) {
+    const container = document.getElementById('forecast-annotations');
+    if (!container) return;
+    clearElement(container);
+    const items = forecast.map(item => {
+        const [year, month] = item.month.split('-').map(Number);
+        const prefix = `${item.month}-`;
+        const holidays = Object.entries(globalThis.PTO.getHolidays(year, config))
+            .filter(([date]) => date.startsWith(prefix));
+        const planned = vacations.filter(vacation =>
+            vacation.start_date <= `${item.month}-31` && vacation.end_date >= `${item.month}-01`
+        );
+        const signals = [
+            holidays.length ? `${holidays.length} holiday${holidays.length === 1 ? '' : 's'}` : '',
+            planned.length ? `${planned.length} planned leave booking${planned.length === 1 ? '' : 's'}` : ''
+        ].filter(Boolean);
+        const row = element('button', 'forecast-annotation');
+        row.type = 'button';
+        row.dataset.forecastMonth = `${year}-${String(month).padStart(2, '0')}`;
+        row.setAttribute('aria-label', `${item.month_name}: ${signals.join(', ') || 'no scheduled signals'}, projected balance ${item.balance.toFixed(1)}`);
+        appendText(row, 'strong', '', item.month_name.substring(0, 3));
+        appendText(row, 'span', '', signals.join(' · ') || 'No scheduled signals');
+        appendText(row, 'span', 'forecast-annotation-balance', `Balance ${item.balance.toFixed(1)}`);
+        return row;
+    });
+    container.append(...items);
+}
+
+export function renderPlanningView(year, config, vacations) {
+    const grid = document.getElementById('planning-grid');
+    const summary = document.getElementById('planning-summary');
+    const select = document.getElementById('planning-year');
+    if (!grid || !summary || !select) return;
+    if (!select.options.length) {
+        [year - 1, year, year + 1].forEach(optionYear => {
+            select.add(new Option(String(optionYear), String(optionYear)));
+        });
+    }
+    select.value = String(year);
+    clearElement(grid);
+    const holidays = globalThis.PTO.getHolidays(year, config);
+    const entries = MONTHS.map((monthName, index) => {
+        const month = String(index + 1).padStart(2, '0');
+        const prefix = `${year}-${month}-`;
+        const monthEnd = new Date(Date.UTC(year, index + 1, 0)).toISOString().slice(0, 10);
+        const monthHolidays = Object.entries(holidays).filter(([date]) => date.startsWith(prefix));
+        const monthVacations = vacations.filter(vacation =>
+            vacation.start_date <= monthEnd && vacation.end_date >= `${year}-${month}-01`);
+        const balance = globalThis.PTO.calculateBalanceOnDate(monthEnd, config, vacations);
+        const button = element('button', 'planning-month');
+        button.type = 'button';
+        button.dataset.planningMonth = String(index);
+        button.setAttribute('role', 'gridcell');
+        button.setAttribute('aria-label', `${monthName} ${year}: ${monthHolidays.length} holidays, ${monthVacations.length} planned leave bookings, projected balance ${balance.balance.toFixed(1)}`);
+        appendText(button, 'strong', 'planning-month-name', monthName);
+        const signal = element('span', 'planning-signal-list');
+        appendText(signal, 'span', '', `${monthHolidays.length} holiday${monthHolidays.length === 1 ? '' : 's'}`);
+        appendText(signal, 'span', '', `${monthVacations.length} planned`);
+        button.append(signal);
+        appendText(button, 'span', 'planning-balance', `Balance ${balance.balance.toFixed(1)}`);
+        grid.append(button);
+        return { balance, holidays: monthHolidays.length, vacations: monthVacations.length };
+    });
+    const bookedMonths = entries.filter(entry => entry.vacations).length;
+    const holidayCount = entries.reduce((total, entry) => total + entry.holidays, 0);
+    const yearEnd = entries[entries.length - 1].balance;
+    summary.textContent = `${bookedMonths} month${bookedMonths === 1 ? '' : 's'} with planned leave, ${holidayCount} holiday signal${holidayCount === 1 ? '' : 's'}, and ${yearEnd.balance.toFixed(1)} projected balance at year end.`;
+}
+
 export function renderExcelTable(vacations) {
     const table = document.createElement('table');
     const head = document.createElement('thead');

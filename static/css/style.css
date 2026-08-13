@@ -1168,6 +1168,94 @@ body {
     margin-top: 1.5rem;
 }
 
+.forecast-annotations {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.forecast-annotation,
+.planning-month {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+    min-height: 44px;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--card);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.forecast-annotation:hover,
+.planning-month:hover {
+    border-color: var(--primary-light);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.forecast-annotation span,
+.planning-signal-list {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.forecast-annotation-balance,
+.planning-balance {
+    color: var(--success) !important;
+    font-weight: 600;
+}
+
+.planning-summary {
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+}
+
+.planning-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.planning-month {
+    min-height: 112px;
+}
+
+.planning-month-name {
+    font-size: 1rem;
+}
+
+.planning-signal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.what-if-controls {
+    display: grid;
+    grid-template-columns: auto minmax(8rem, 1fr) 3rem;
+    align-items: center;
+    gap: 1rem;
+}
+
+.what-if-controls input {
+    width: 100%;
+    accent-color: var(--primary);
+}
+
+.what-if-controls output {
+    font-weight: 700;
+    text-align: right;
+}
+
+.what-if-result {
+    margin-top: 0.85rem;
+    color: var(--text-muted);
+}
+
 .heatmap-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
@@ -1720,6 +1808,20 @@ input:checked + .toggle-slider:before {
     .forecast-controls {
         flex-wrap: wrap;
         justify-content: flex-end;
+    }
+
+    .forecast-annotations,
+    .planning-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .what-if-controls {
+        grid-template-columns: 1fr auto;
+    }
+
+    .what-if-controls input {
+        grid-column: 1 / -1;
+        grid-row: 2;
     }
 }
 
