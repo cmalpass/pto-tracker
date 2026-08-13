@@ -1256,6 +1256,75 @@ body {
     color: var(--text-muted);
 }
 
+.scenario-card {
+    margin-top: 1.5rem;
+}
+
+.scenario-form {
+    display: grid;
+    gap: 1rem;
+    padding: 1rem 0;
+}
+
+.scenario-form .form-row {
+    align-items: end;
+}
+
+.scenario-form .form-actions {
+    justify-content: space-between;
+}
+
+.scenario-form input:disabled {
+    opacity: 0.55;
+}
+
+.scenario-results {
+    overflow-x: auto;
+}
+
+.scenario-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 38rem;
+}
+
+.scenario-summary-table th,
+.scenario-summary-table td {
+    padding: 0.7rem;
+    border-top: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.scenario-summary-table th {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+}
+
+.scenario-bookings {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.75rem;
+}
+
+.scenario-bookings ul {
+    margin: 0.75rem 0 0 1.25rem;
+}
+
+.scenario-bookings li {
+    margin: 0.4rem 0;
+}
+
+.scenario-monthly {
+    margin-top: 1.5rem;
+}
+
+.scenario-monthly h3 {
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
+
 .heatmap-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
