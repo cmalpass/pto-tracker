@@ -55,6 +55,10 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
+`requirements.txt` is the local-development entry point and includes the
+Playwright browser-test dependency. The production Docker image installs only
+`requirements-prod.txt`; it does not contain test tooling.
+
 ### Run the static app
 
 ```bash
