@@ -250,7 +250,7 @@ async function loadDashboard() {
         document.getElementById('stat-scheduled-pto').textContent = Number(scheduledPtoDays).toFixed(1);
         document.getElementById('stat-remaining-days').textContent = daysRemainingThisYear();
         renderTypeBreakdownDom(typeBreakdown, config.pto_accrual_type === 'hours' ? 'hours' : 'days');
-        document.getElementById('accrual-per-period').textContent = `${config.pto_accrual_per_pay_period} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
+        document.getElementById('dashboard-accrual-per-period').textContent = `${config.pto_accrual_per_pay_period} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
         document.getElementById('pay-periods').textContent = config.pay_periods_per_year;
         const annual = (config.pto_accrual_per_pay_period * config.pay_periods_per_year);
         document.getElementById('annual-accrual').textContent = `${annual.toFixed(1)} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
@@ -1176,7 +1176,7 @@ async function openSettings() {
         });
         document.getElementById('holiday-country').value = config.holiday_country || 'US';
         document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
-        document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
+        document.getElementById('settings-accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
         document.getElementById('hours-per-day').value = config.pto_hours_per_day || 8;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
         document.getElementById('accrual-method').value = config.accrual_method || 'full';
