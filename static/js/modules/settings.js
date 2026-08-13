@@ -24,3 +24,16 @@ export function configWarnings(config) {
     }
     return warnings;
 }
+
+const USER_POLICY_FIELDS = Object.freeze([
+    'accrual_start_date',
+    'pto_start_year'
+]);
+
+export function applyPolicyPreset(currentConfig, presetSettings, formSettings = {}) {
+    const nextConfig = { ...currentConfig, ...presetSettings, ...formSettings };
+    USER_POLICY_FIELDS.forEach(field => {
+        if (currentConfig[field] !== undefined) nextConfig[field] = currentConfig[field];
+    });
+    return nextConfig;
+}

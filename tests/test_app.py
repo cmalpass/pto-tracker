@@ -22,6 +22,14 @@ async def open_app(page):
     await page.goto(BASE_URL)
     await page.wait_for_selector("#current-balance")
     await page.wait_for_function("() => Boolean(window.PTOStore && window.PTO)")
+    if await page.locator("#settings-modal.active").count():
+        await page.click("#btn-cancel-settings")
+
+
+async def open_first_run_app(page):
+    await page.goto(BASE_URL)
+    await page.wait_for_selector("#settings-modal.active")
+    await page.wait_for_function("() => Boolean(window.PTOStore && window.PTO)")
 
 
 async def test_dashboard_and_forecast(browser):
@@ -382,6 +390,35 @@ async def test_settings_stay_local(browser):
         await context.close()
 
 
+async def test_policy_preset_first_run_preserves_user_fields_and_persists_completion(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_first_run_app(page)
+        assert await page.locator("[data-first-run-message]").is_visible(), "first-run message is not visible"
+        await page.evaluate(
+            """async () => {
+                const config = await PTOStore.getConfig();
+                await PTOStore.putConfig({
+                    ...config,
+                    accrual_start_date: "2025-04-15",
+                    pto_start_year: 2025
+                });
+            }"""
+        )
+        await page.select_option("#policy-preset", "generous")
+        await page.fill("input[name='pto_accrual_per_pay_period']", "2")
+        page.once("dialog", lambda dialog: dialog.accept())
+        await page.click("#btn-apply-policy")
+        await page.wait_for_selector("#settings-modal:not(.active)", state="hidden")
+        stored = await page.evaluate("() => PTOStore.getConfig()")
+        assert float(stored["pto_accrual_per_pay_period"]) == 2, stored
+        assert stored["accrual_start_date"] == "2025-04-15", stored
+        assert stored["pto_start_year"] == 2025, stored
+        assert stored["policy_setup_completed"] is True, stored
+    finally:
+        await context.close()
+
+
 async def test_accessibility_semantics_and_keyboard_controls(browser):
     context, page = await new_page(browser)
     try:
@@ -570,6 +607,7 @@ async def main():
             test_notes_and_json_backup,
             test_vacation_calendar_export_and_import_preview,
             test_settings_stay_local,
+            test_policy_preset_first_run_preserves_user_fields_and_persists_completion,
             test_accessibility_semantics_and_keyboard_controls,
             test_mobile_layout_and_touch_targets,
             test_mobile_vacation_actions_and_modal_sheet,

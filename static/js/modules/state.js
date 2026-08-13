@@ -16,7 +16,8 @@ export const DEFAULT_CONFIG = Object.freeze({
     pto_start_year: currentUtcYear,
     pto_vesting_schedule: 'immediate',
     pto_grace_period_days: 0,
-    timezone: 'UTC'
+    timezone: 'UTC',
+    policy_setup_completed: false
 });
 
 export const POLICY_PRESETS = Object.freeze({
@@ -26,7 +27,7 @@ export const POLICY_PRESETS = Object.freeze({
         settings: {
             pto_accrual_per_pay_period: 1, pto_accrual_type: 'days', pto_hours_per_day: 8,
             pto_holidays_require_pto: false, pay_periods_per_year: 26,
-            accrual_start_date: `${currentUtcYear}-01-01`, accrual_method: 'pro-rata',
+            accrual_method: 'pro-rata',
             pto_carryover_limit: 40, pto_uses_rollover: true,
             pto_lose_above_limit: true, pto_vesting_schedule: 'immediate'
         }
@@ -37,7 +38,7 @@ export const POLICY_PRESETS = Object.freeze({
         settings: {
             pto_accrual_per_pay_period: 1.5, pto_accrual_type: 'days', pto_hours_per_day: 8,
             pto_holidays_require_pto: false, pay_periods_per_year: 26,
-            accrual_start_date: `${currentUtcYear}-01-01`, accrual_method: 'pro-rata',
+            accrual_method: 'pro-rata',
             pto_carryover_limit: 80, pto_uses_rollover: true,
             pto_lose_above_limit: false, pto_vesting_schedule: 'immediate'
         }
@@ -48,7 +49,7 @@ export const POLICY_PRESETS = Object.freeze({
         settings: {
             pto_accrual_per_pay_period: 1, pto_accrual_type: 'days', pto_hours_per_day: 8,
             pto_holidays_require_pto: false, pay_periods_per_year: 26,
-            accrual_start_date: `${currentUtcYear}-01-01`, accrual_method: 'pro-rata',
+            accrual_method: 'pro-rata',
             pto_carryover_limit: 0, pto_uses_rollover: false,
             pto_lose_above_limit: true, pto_vesting_schedule: 'immediate'
         }

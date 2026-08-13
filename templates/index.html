@@ -405,6 +405,7 @@
                 <div class="modal-body">
                     <section class="policy-wizard" aria-labelledby="policy-wizard-title">
                         <h3 id="policy-wizard-title">Policy setup wizard</h3>
+                        <p class="setting-description" data-first-run-message hidden>Welcome. Choose a preset, review the settings, and customize them before saving.</p>
                         <p class="setting-description">Choose a preset to preview a complete policy before applying it. Your current settings stay unchanged until you confirm.</p>
                         <div class="wizard-controls">
                             <select id="policy-preset" aria-label="Policy preset">
@@ -412,7 +413,7 @@
                             </select>
                             <button type="button" class="btn btn-secondary" id="btn-preview-policy">Preview</button>
                         </div>
-                        <div id="policy-preview" class="policy-preview" hidden></div>
+                        <div id="policy-preview" class="policy-preview" aria-live="polite" hidden></div>
                         <button type="button" class="btn btn-primary" id="btn-apply-policy" hidden>Apply preset</button>
                     </section>
                     <form id="settings-form" class="settings-form">

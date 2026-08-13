@@ -1,11 +1,10 @@
 /** PTO Tracker application coordinator. */
 import {
-    DEFAULT_CONFIG,
     POLICY_PRESETS,
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-1';
+} from './modules/state.js?v=20260813-2';
 import {
     announce,
     closeDialog,
@@ -14,7 +13,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-1';
+} from './modules/dom.js?v=20260813-2';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,24 +29,27 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-1';
+} from './modules/rendering.js?v=20260813-2';
 import {
     dismissNotification,
     generateNotifications,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-1';
+} from './modules/notifications.js?v=20260813-2';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-1';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-1';
-import { configWarnings } from './modules/settings.js?v=20260813-1';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-1';
+} from './modules/calendar.js?v=20260813-2';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-2';
+import {
+    applyPolicyPreset,
+    configWarnings
+} from './modules/settings.js?v=20260813-2';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-2';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-1';
+} from './modules/forecast.js?v=20260813-2';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -100,6 +102,7 @@ export function startApplication() {
         await setupNotes();
         setupDataTransfer();
         await loadDashboard();
+        if (!state.config.policy_setup_completed) openSettings(true);
         const persisted = await PTOStore.requestPersistentStorage();
         if (navigator.storage?.persist && !persisted) {
             showToast('Browser storage persistence was not granted; export backups regularly.', 'warning');
@@ -1088,6 +1091,7 @@ function setupSettings() {
     document.getElementById('btn-cancel-settings').addEventListener('click', closeSettings);
     setupDialog(document.getElementById('settings-modal'), closeSettings);
     document.getElementById('btn-preview-policy').addEventListener('click', previewPolicy);
+    document.getElementById('policy-preset').addEventListener('change', previewPolicy);
     document.getElementById('btn-apply-policy').addEventListener('click', applyPolicy);
     document.getElementById('settings-form').addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1099,7 +1103,7 @@ function setupSettings() {
             else data[el.name] = el.value;
         }
         try {
-            const merged = { ...state.config, ...data };
+            const merged = { ...state.config, ...data, policy_setup_completed: true };
             delete merged.current_date;
             delete merged.current_year;
             const warnings = configWarnings(merged);
@@ -1117,7 +1121,7 @@ function setupSettings() {
     });
 }
 
-async function openSettings() {
+async function openSettings(firstRun = false) {
     try {
         const config = await getRuntimeConfig();
         state.config = config;
@@ -1126,19 +1130,10 @@ async function openSettings() {
             console.warn('Policy presets unavailable:', err);
             disablePolicyWizard();
         });
-        document.getElementById('holiday-country').value = config.holiday_country || 'US';
-        document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
-        document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
-        document.getElementById('hours-per-day').value = config.pto_hours_per_day || 8;
-        document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
-        document.getElementById('accrual-method').value = config.accrual_method || 'full';
-        document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
-        document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
-        document.getElementById('timezone').value = config.timezone || 'UTC';
-        document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
-        document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
-        document.getElementById('lose-limit').checked = config.pto_lose_above_limit !== false;
-        document.getElementById('holidays-require-pto').checked = config.pto_holidays_require_pto !== false;
+        populateSettingsForm(config);
+        const wizard = document.querySelector('.policy-wizard');
+        wizard.toggleAttribute('data-first-run', firstRun);
+        wizard.querySelector('[data-first-run-message]').hidden = !firstRun;
         openDialog(document.getElementById('settings-modal'), '#policy-preset');
     } catch (err) {
         showToast('Failed to load settings', 'error');
@@ -1196,6 +1191,8 @@ function previewPolicy() {
     description.textContent = preset.description;
     const summary = document.createElement('p');
     const settings = preset.settings;
+    const candidate = applyPolicyPreset(state.config, settings);
+    populateSettingsForm(candidate);
     summary.textContent = `${settings.pto_accrual_per_pay_period} ${settings.pto_accrual_type} per pay period, ${settings.pay_periods_per_year} pay periods/year, ${settings.pto_uses_rollover ? 'rollover enabled' : 'no rollover'}.`;
     preview.append(heading, description, summary);
     preview.hidden = false;
@@ -1206,17 +1203,52 @@ async function applyPolicy() {
     const presetId = document.getElementById('policy-preset').value;
     const preset = state.policyPresets?.[presetId];
     if (!preset) return;
-    if (!window.confirm(`Apply the "${preset.name}" preset? This will replace the current PTO settings.`)) return;
+    if (!window.confirm(`Apply the "${preset.name}" preset with the settings shown below?`)) return;
     try {
-        const config = { ...DEFAULT_CONFIG, ...preset.settings };
+        const currentConfig = await getRuntimeConfig();
+        const config = applyPolicyPreset(
+            currentConfig,
+            preset.settings,
+            readSettingsForm()
+        );
+        config.policy_setup_completed = true;
+        const warnings = configWarnings(config);
+        const blocking = warnings.find(item => item.severity === 'error');
+        if (blocking) throw new Error(blocking.message);
         await PTOStore.putConfig(config);
         state.config = await getRuntimeConfig();
         showToast('Policy preset applied!', 'success');
+        showWarningToast(warnings);
         closeSettings();
         await refreshViews();
     } catch (err) {
         showToast(err.message || 'Failed to apply policy preset', 'error');
     }
+}
+
+function readSettingsForm() {
+    const data = {};
+    for (const el of document.getElementById('settings-form').elements) {
+        if (!el.name || el.type === 'button' || el.type === 'submit') continue;
+        data[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+    }
+    return data;
+}
+
+function populateSettingsForm(config) {
+    document.getElementById('holiday-country').value = config.holiday_country || 'US';
+    document.getElementById('accrual-type').value = config.pto_accrual_type || 'days';
+    document.getElementById('accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
+    document.getElementById('hours-per-day').value = config.pto_hours_per_day || 8;
+    document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
+    document.getElementById('accrual-method').value = config.accrual_method || 'full';
+    document.getElementById('carryover-limit').value = config.pto_carryover_limit ?? 40;
+    document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
+    document.getElementById('timezone').value = config.timezone || 'UTC';
+    document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
+    document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
+    document.getElementById('lose-limit').checked = config.pto_lose_above_limit !== false;
+    document.getElementById('holidays-require-pto').checked = config.pto_holidays_require_pto !== false;
 }
 
 async function loadForecast() {

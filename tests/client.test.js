@@ -309,3 +309,23 @@ test('migrates legacy fallback records and imports schema v1 backups', async () 
    assert.equal((await PTOStore.listVacations())[0].name, 'Old backup');
    assert.equal((await PTOStore.listVacations())[0].type, 'vacation');
 });
+
+test('stores policy wizard completion without dropping user-specific policy fields', async () => {
+   await PTOStore.putConfig({
+       ...config,
+       accrual_start_date: '2025-04-15',
+       pto_start_year: 2025,
+       policy_setup_completed: false
+   });
+   const stored = await PTOStore.getConfig();
+   await PTOStore.putConfig({
+       ...stored,
+       pto_accrual_per_pay_period: 1.5,
+       pto_carryover_limit: 80,
+       policy_setup_completed: true
+   });
+   const completed = await PTOStore.getConfig();
+   assert.equal(completed.accrual_start_date, '2025-04-15');
+   assert.equal(completed.pto_start_year, 2025);
+   assert.equal(completed.policy_setup_completed, true);
+});
