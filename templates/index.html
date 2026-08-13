@@ -441,11 +441,12 @@
                         <div class="form-group">
                             <label for="settings-pay-periods">Pay Periods Per Year</label>
                             <select id="settings-pay-periods" name="pay_periods_per_year">
-                                <option value="24">24 (Bi-weekly x 2)</option>
-                                <option value="26" selected>26 (Bi-weekly)</option>
-                                <option value="27">27 (Semi-monthly x 1.08)</option>
-                                <option value="52">52 (Weekly)</option>
+                                <option value="24">24 — Semi-monthly (twice monthly)</option>
+                                <option value="26" selected>26 — Biweekly (every two weeks)</option>
+                                <option value="27">27 — Biweekly year with 27 pay dates</option>
+                                <option value="52">52 — Weekly</option>
                             </select>
+                            <small class="form-help">Use your employer's actual annual pay-date count; semi-monthly and biweekly schedules are different.</small>
                         </div>
                         <div class="form-group">
                             <label for="accrual-method">Accrual Method</label>
