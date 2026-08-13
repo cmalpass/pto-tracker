@@ -13,6 +13,9 @@
     --text: #1e293b;
     --text-muted: #475569;
     --border: #e2e8f0;
+    --control-bg: #ffffff;
+    --control-text: #1e293b;
+    --control-border: #94a3b8;
     --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
     --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
     --radius: 12px;
@@ -27,6 +30,9 @@
     --text: #f1f5f9;
     --text-muted: #cbd5e1;
     --border: #334155;
+    --control-bg: #0f172a;
+    --control-text: #f8fafc;
+    --control-border: #94a3b8;
     --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
     --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.2);
 }
@@ -502,13 +508,28 @@ body {
     border-radius: var(--radius-sm);
     font-size: 1rem;
     transition: border-color 0.2s;
-    background: var(--card);
-    color: var(--text);
+    background: var(--control-bg);
+    color: var(--control-text);
 }
 
 .form-input:focus {
     outline: none;
     border-color: var(--primary);
+}
+
+/* Native controls need explicit colors because browser/user-agent styles can
+   otherwise keep a light dropdown menu while the app is in dark mode. */
+input,
+select,
+textarea,
+option {
+    color: var(--control-text);
+    background-color: var(--control-bg);
+}
+
+select option {
+    color: var(--control-text);
+    background-color: var(--control-bg);
 }
 
 .checkbox-label {
@@ -2334,21 +2355,26 @@ body {
 }
 
 .btn-secondary {
-    background: #f8fbff;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--control-bg);
+    background-color: var(--control-bg) !important;
+    color: var(--control-text);
     border-color: var(--border);
 }
 
 .form-group label,
 .form-group .checkbox-label {
     font-weight: 700;
-    color: #1e293b;
+    color: var(--text);
 }
 
 .form-group input,
 .form-group select {
     width: 100%;
-    border: 1px solid #c9d8ea;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    border: 1px solid var(--control-border);
+    background: var(--control-bg);
+    color: var(--control-text);
     border-radius: 10px;
     padding: 0.65rem 0.75rem;
     font-size: 1.02rem;
@@ -2368,13 +2394,54 @@ body {
 
 .vacation-item,
 .suggestion-item {
-    background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+    background: var(--card);
 }
 
 .vacation-item:hover,
 .suggestion-item:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow);
+}
+
+/* The visual refresh above intentionally has light-mode decoration. Reassert
+   the dark surface values at the end of the cascade so theme toggling never
+   leaves white cards, labels, or secondary controls behind. */
+[data-theme="dark"] body {
+    --primary: #4f46e5;
+    --primary-dark: #3730a3;
+    --primary-light: #818cf8;
+    --secondary: #6d28d9;
+    --accent: #f59e0b;
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --bg: #0f172a;
+    --card: #1e293b;
+    --text: #f8fafc;
+    --text-muted: #cbd5e1;
+    --border: #64748b;
+    --control-bg: #0f172a;
+    --control-text: #f8fafc;
+    --control-border: #94a3b8;
+    background: var(--bg);
+}
+
+[data-theme="dark"] .header {
+    background: rgba(15, 23, 42, 0.96);
+    border-bottom-color: var(--border);
+}
+
+[data-theme="dark"] .card,
+[data-theme="dark"] .modal {
+    border-color: var(--border);
+}
+
+html[data-theme="dark"] button.btn-secondary {
+    color-scheme: dark;
+    background: #1e293b !important;
+    background-color: #1e293b !important;
+    color: #f8fafc;
+    border-color: #64748b;
 }
 
 /* Keep the mobile navigation and full-screen modal overrides last. */

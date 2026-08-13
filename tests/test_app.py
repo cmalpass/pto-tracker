@@ -11,6 +11,23 @@ from playwright.async_api import async_playwright
 BASE_URL = os.environ.get("PTO_TEST_BASE_URL", "http://localhost:5000")
 
 
+def contrast_ratio(foreground, background):
+    def channel(value):
+        value /= 255
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    def luminance(color):
+        return 0.2126 * channel(color[0]) + 0.7152 * channel(color[1]) + 0.0722 * channel(color[2])
+
+    lighter = max(luminance(foreground), luminance(background))
+    darker = min(luminance(foreground), luminance(background))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def parse_rgb(value):
+    return tuple(int(channel) for channel in value.removeprefix("rgb(").removesuffix(")").split(", "))
+
+
 async def new_page(browser):
     context = await browser.new_context()
     await context.add_init_script("localStorage.clear();")
@@ -444,6 +461,43 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
         await context.close()
 
 
+async def test_theme_controls_meet_contrast(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("#btn-settings")
+        await page.wait_for_selector("#settings-modal.active")
+        for theme in ("light", "dark"):
+            styles = await page.evaluate(
+                """theme => {
+                    document.documentElement.dataset.theme = theme;
+                    const select = document.querySelector('#holiday-country');
+                    const label = document.querySelector('label[for="holiday-country"]');
+                    const read = node => {
+                        const style = getComputedStyle(node);
+                        const surface = style.backgroundColor === 'rgba(0, 0, 0, 0)'
+                            ? getComputedStyle(node.closest('.modal')).backgroundColor
+                            : style.backgroundColor;
+                        return { color: style.color, background: surface };
+                    };
+                    return { select: read(select), label: read(label) };
+                }""",
+                theme,
+            )
+            select_ratio = contrast_ratio(
+                parse_rgb(styles["select"]["color"]),
+                parse_rgb(styles["select"]["background"]),
+            )
+            label_ratio = contrast_ratio(
+                parse_rgb(styles["label"]["color"]),
+                parse_rgb(styles["label"]["background"]),
+            )
+            assert select_ratio >= 4.5, (theme, styles, select_ratio)
+            assert label_ratio >= 4.5, (theme, styles, label_ratio)
+    finally:
+        await context.close()
+
+
 async def test_mobile_layout_and_touch_targets(browser):
     context = await browser.new_context(viewport={"width": 320, "height": 844})
     await context.add_init_script(
@@ -542,6 +596,7 @@ async def main():
             test_vacation_calendar_export_and_import_preview,
             test_settings_stay_local,
             test_accessibility_semantics_and_keyboard_controls,
+            test_theme_controls_meet_contrast,
             test_mobile_layout_and_touch_targets,
             test_module_loading_and_browser_value_escaping,
         ]
