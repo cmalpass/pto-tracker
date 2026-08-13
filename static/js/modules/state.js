@@ -78,7 +78,8 @@ export const state = {
     suggestionAnalysisTimer: null,
     vacationAnalysisRequestId: 0,
     notificationAlerts: [],
-    notifications: []
+    notifications: [],
+    scenarios: []
 };
 
 export const MONTHS = [

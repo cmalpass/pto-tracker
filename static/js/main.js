@@ -1442,6 +1442,7 @@ function loadPlanning() {
     const year = Number(select.value || state.currentYear);
     renderPlanningViewDom(year, state.config, state.vacations);
     updateWhatIf();
+    renderScenarioResults();
 }
 
 function setupPlanning() {
@@ -1466,6 +1467,205 @@ function setupPlanning() {
         state.currentMonth = monthNumber - 1;
         document.querySelector('.nav-tab[data-tab="calendar"]').click();
     });
+    document.getElementById('scenario-form')?.addEventListener('submit', addScenarioBooking);
+    document.getElementById('scenario-target')?.addEventListener('change', updateScenarioNameState);
+    document.getElementById('scenario-monthly')?.addEventListener('change', renderScenarioResults);
+    document.getElementById('scenario-results')?.addEventListener('click', event => {
+        const removeScenario = event.target.closest('[data-remove-scenario]');
+        const removeBooking = event.target.closest('[data-remove-booking]');
+        if (removeScenario) {
+            state.scenarios = state.scenarios.filter(item => item.id !== removeScenario.dataset.removeScenario);
+            renderScenarioControls();
+            renderScenarioResults();
+        } else if (removeBooking) {
+            const scenario = state.scenarios.find(item => item.id === removeBooking.dataset.scenarioId);
+            if (scenario) {
+                scenario.bookings = scenario.bookings.filter((_, index) =>
+                    index !== Number(removeBooking.dataset.removeBooking));
+                renderScenarioResults();
+            }
+        }
+    });
+    renderScenarioControls();
+}
+
+function updateScenarioNameState() {
+    const target = document.getElementById('scenario-target');
+    const name = document.getElementById('scenario-name');
+    if (!target || !name) return;
+    const isNew = !target.value;
+    name.disabled = !isNew;
+    name.required = isNew;
+    if (!isNew) name.value = '';
+}
+
+function renderScenarioControls() {
+    const target = document.getElementById('scenario-target');
+    const submit = document.getElementById('btn-add-scenario');
+    if (!target || !submit) return;
+    const selected = target.value;
+    target.replaceChildren(new Option('New scenario', ''));
+    state.scenarios.forEach(scenario => target.add(new Option(scenario.name, scenario.id)));
+    target.value = selected && state.scenarios.some(item => item.id === selected) ? selected : '';
+    submit.textContent = target.value ? 'Add booking' : 'Add scenario';
+    updateScenarioNameState();
+}
+
+function addScenarioBooking(event) {
+    event.preventDefault();
+    const error = document.getElementById('scenario-form-error');
+    const target = document.getElementById('scenario-target');
+    const nameInput = document.getElementById('scenario-name');
+    try {
+        const scenario = state.scenarios.find(item => item.id === target.value);
+        if (!scenario && state.scenarios.length >= 3) {
+            throw new RangeError('You can compare up to 3 scenarios');
+        }
+        const scenarioName = scenario ? scenario.name : String(nameInput.value || '').trim();
+        if (!scenarioName) throw new TypeError('Scenario name is required');
+        const booking = PTO.validateScenarioBooking({
+            name: document.getElementById('scenario-booking-name').value,
+            type: document.getElementById('scenario-type').value,
+            start_date: document.getElementById('scenario-start').value,
+            end_date: document.getElementById('scenario-end').value,
+            days: document.getElementById('scenario-days').value,
+            hours: document.getElementById('scenario-hours').value
+        }, state.config, state.vacations, scenario?.bookings);
+        const destination = scenario || {
+            id: `scenario-${Date.now()}-${state.scenarios.length}`,
+            name: scenarioName,
+            bookings: []
+        };
+        destination.bookings.push(booking);
+        if (!scenario) state.scenarios.push(destination);
+        event.target.reset();
+        document.getElementById('scenario-days').value = '0';
+        document.getElementById('scenario-hours').value = '0';
+        renderScenarioControls();
+        renderScenarioResults();
+        announce(`${scenario ? 'Booking added to' : 'Scenario added:'} ${scenarioName}.`);
+        if (error) error.hidden = true;
+    } catch (err) {
+        if (error) {
+            error.textContent = err.message || 'Unable to add scenario booking';
+            error.hidden = false;
+        }
+        showToast(err.message || 'Unable to add scenario booking', 'error');
+    }
+}
+
+function renderScenarioResults() {
+    const container = document.getElementById('scenario-results');
+    if (!container || !state.config?.accrual_start_date) return;
+    const year = Number(document.getElementById('planning-year')?.value || state.currentYear);
+    const unit = state.config.pto_accrual_type === 'hours' ? 'hours' : 'days';
+    const comparison = PTO.calculateScenarioSummary(year, state.config, state.vacations, state.scenarios);
+    container.replaceChildren();
+    if (!state.scenarios.length) {
+        const empty = document.createElement('p');
+        empty.className = 'empty-state';
+        empty.textContent = 'Add a named scenario to compare temporary bookings with your current plan.';
+        container.append(empty);
+        return;
+    }
+    const table = document.createElement('table');
+    table.className = 'scenario-summary-table';
+    const caption = document.createElement('caption');
+    caption.className = 'sr-only';
+    caption.textContent = `Scenario comparison for ${year}`;
+    table.append(caption);
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    ['Plan', 'Bookings', 'Year-end balance', 'Used', 'Forfeited', 'Actions'].forEach(label => {
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.textContent = label;
+        headRow.append(cell);
+    });
+    head.append(headRow);
+    const body = document.createElement('tbody');
+    [comparison.baseline, ...comparison.scenarios].forEach(plan => {
+        const row = document.createElement('tr');
+        [plan.name, String(plan.bookings?.length ?? state.vacations.length),
+            `${plan.year_end_balance.toFixed(2)} ${unit}`,
+            `${plan.total_used.toFixed(2)} ${unit}`,
+            `${plan.forfeited.toFixed(2)} ${unit}`].forEach(value => {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.append(cell);
+        });
+        const actions = document.createElement('td');
+        if (plan !== comparison.baseline) {
+            const scenario = state.scenarios.find(item => item.name === plan.name);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-sm btn-secondary';
+            button.dataset.removeScenario = scenario.id;
+            button.textContent = 'Remove';
+            actions.append(button);
+        } else {
+            actions.textContent = 'Saved bookings';
+        }
+        row.append(actions);
+        body.append(row);
+    });
+    table.append(head, body);
+    container.append(table);
+    state.scenarios.forEach(scenario => {
+        const details = document.createElement('details');
+        details.className = 'scenario-bookings';
+        const summary = document.createElement('summary');
+        summary.textContent = `${scenario.name} (${scenario.bookings.length} booking${scenario.bookings.length === 1 ? '' : 's'})`;
+        details.append(summary);
+        const list = document.createElement('ul');
+        scenario.bookings.forEach((booking, index) => {
+            const item = document.createElement('li');
+            item.textContent = `${booking.name}: ${booking.start_date} to ${booking.end_date}, ${booking.days} days + ${booking.hours} hours`;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-sm btn-secondary';
+            button.dataset.scenarioId = scenario.id;
+            button.dataset.removeBooking = String(index);
+            button.textContent = 'Remove';
+            item.append(' ', button);
+            list.append(item);
+        });
+        details.append(list);
+        container.append(details);
+    });
+    if (document.getElementById('scenario-monthly')?.checked) {
+        const monthly = document.createElement('div');
+        monthly.className = 'scenario-monthly';
+        const title = document.createElement('h3');
+        title.textContent = 'Monthly balance comparison';
+        monthly.append(title);
+        const monthlyTable = document.createElement('table');
+        monthlyTable.className = 'scenario-summary-table';
+        const monthlyHead = document.createElement('tr');
+        ['Month', 'Current plan', ...comparison.scenarios.map(item => item.name)].forEach(label => {
+            const cell = document.createElement('th');
+            cell.scope = 'col';
+            cell.textContent = label;
+            monthlyHead.append(cell);
+        });
+        const monthlyHeadContainer = document.createElement('thead');
+        monthlyHeadContainer.append(monthlyHead);
+        monthlyTable.append(monthlyHeadContainer);
+        const monthlyBody = document.createElement('tbody');
+        for (let index = 0; index < 12; index += 1) {
+            const row = document.createElement('tr');
+            const values = [comparison.baseline.monthly_balances[index], ...comparison.scenarios.map(item => item.monthly_balances[index])];
+            [MONTHS[index], ...values.map(item => `${item.balance.toFixed(2)} ${unit}`)].forEach(value => {
+                const cell = document.createElement('td');
+                cell.textContent = value;
+                row.append(cell);
+            });
+            monthlyBody.append(row);
+        }
+        monthlyTable.append(monthlyBody);
+        monthly.append(monthlyTable);
+        container.append(monthly);
+    }
 }
 
 function updateWhatIf() {

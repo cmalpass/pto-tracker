@@ -500,6 +500,68 @@
         };
     }
 
+    function validateScenarioBooking(record, config, existingVacations, scenarioVacations) {
+        if (!record || typeof record !== 'object') {
+            throw new TypeError('Scenario booking must be an object');
+        }
+        const name = String(record.name ?? '').trim();
+        if (!name) throw new TypeError('Scenario booking name is required');
+        if (!isCanonicalDate(record.start_date) || !isCanonicalDate(record.end_date)) {
+            throw new TypeError('Scenario dates must use YYYY-MM-DD format');
+        }
+        if (record.start_date > record.end_date) {
+            throw new RangeError('Scenario start_date cannot be after end_date');
+        }
+        const booking = normalizeBooking(record.days ?? 0, record.hours ?? 0, config);
+        if (booking.amount <= 0) {
+            throw new RangeError('Scenario booking must use a positive PTO amount');
+        }
+        const candidate = {
+            ...record,
+            name,
+            start_date: record.start_date,
+            end_date: record.end_date,
+            days: booking.days,
+            hours: booking.hours,
+            type: normalizeLeaveType(record.type)
+        };
+        const conflicts = [
+            ...(existingVacations || []),
+            ...(scenarioVacations || [])
+        ];
+        const conflict = detectVacationConflicts(
+            candidate.start_date, candidate.end_date, conflicts
+        );
+        if (conflict.has_conflicts) throw new RangeError(conflict.error);
+        return Object.freeze(candidate);
+    }
+
+    function calculateScenarioSummary(year, config, existingVacations, scenarios) {
+        if (!Number.isInteger(Number(year))) throw new TypeError('year must be an integer');
+        const baseline = generateMultiYearForecast(
+            Number(year), 1, config, existingVacations || []
+        )[0];
+        const normalizedScenarios = (scenarios || []).map(scenario => {
+            if (!scenario || typeof scenario !== 'object' || !String(scenario.name || '').trim()) {
+                throw new TypeError('Scenario name is required');
+            }
+            const bookings = Array.isArray(scenario.bookings) ? scenario.bookings : [];
+            const forecast = generateMultiYearForecast(
+                Number(year), 1, config, [...(existingVacations || []), ...bookings]
+            )[0];
+            return {
+                name: String(scenario.name).trim(),
+                bookings: bookings.map(item => ({ ...item })),
+                ...forecast
+            };
+        });
+        return {
+            year: Number(year),
+            baseline: { name: 'Current plan', ...baseline },
+            scenarios: normalizedScenarios
+        };
+    }
+
     function calculateVacationUsageInRange(rangeStart, rangeEnd, config, vacations, excludeId) {
         const start = typeof rangeStart === 'string' ? parseCanonicalDate(rangeStart) : rangeStart;
         const end = typeof rangeEnd === 'string' ? parseCanonicalDate(rangeEnd) : rangeEnd;
@@ -1189,6 +1251,8 @@
         generateYearlyForecast,
         generateMultiYearForecast,
         detectVacationConflicts,
+        validateScenarioBooking,
+        calculateScenarioSummary,
         analyzeVacation,
         generateVacationSuggestions,
         generateHeatmap

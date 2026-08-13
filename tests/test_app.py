@@ -64,6 +64,47 @@ async def test_year_at_a_glance_and_bounded_what_if(browser):
         await context.close()
 
 
+async def test_scenario_sandbox_is_independent_and_non_persistent(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("button:has-text('Planning')")
+        await page.fill("#scenario-name", "Long weekend")
+        await page.fill("#scenario-booking-name", "Beach trip")
+        await page.fill("#scenario-start", "2026-09-01")
+        await page.fill("#scenario-end", "2026-09-01")
+        await page.fill("#scenario-days", "1")
+        stored_before = await page.evaluate(
+            "() => localStorage.getItem('pto-tracker:data:v3')"
+        )
+        await page.locator("#scenario-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector(".scenario-summary-table tbody tr")
+        assert await page.locator(".scenario-summary-table tbody tr").count() == 2
+        await page.select_option("#scenario-target", label="Long weekend")
+        await page.fill("#scenario-booking-name", "Second trip")
+        await page.fill("#scenario-start", "2026-10-01")
+        await page.fill("#scenario-end", "2026-10-01")
+        await page.fill("#scenario-days", "0")
+        await page.fill("#scenario-hours", "2")
+        await page.locator("#scenario-form").evaluate("(form) => form.requestSubmit()")
+        await page.wait_for_selector("text=Second trip")
+        assert "2 booking" in await page.locator(".scenario-bookings").inner_text()
+        assert await page.evaluate("() => PTOStore.listVacations().then(items => items.length)") == 0
+        assert await page.evaluate(
+            "() => localStorage.getItem('pto-tracker:data:v3')"
+        ) == stored_before
+        await page.reload()
+        await page.wait_for_selector("#current-balance")
+        if await page.locator("#settings-modal.active").count():
+            await page.click("#btn-cancel-settings")
+        await page.click("button:has-text('Planning')")
+        assert await page.locator("#scenario-results").get_by_text(
+            "Add a named scenario"
+        ).is_visible()
+    finally:
+        await context.close()
+
+
 async def test_smart_notifications_generate_and_link_to_actions(browser):
     context, page = await new_page(browser)
     try:

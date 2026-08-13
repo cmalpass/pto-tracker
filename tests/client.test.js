@@ -211,6 +211,55 @@ test('calculates conflicts, balances, forecasts, suggestions, and heatmap', () =
     const suggestions = PTO.generateVacationSuggestions(2026, config, [vacation], {
         today: '2026-01-01'
     });
+
+    test('keeps scenario bookings independent and validates zero or overlapping input', () => {
+        const existing = [{
+            name: 'Saved trip',
+            start_date: '2026-08-03',
+            end_date: '2026-08-03',
+            days: 1,
+            hours: 0
+        }];
+        const first = PTO.validateScenarioBooking({
+            name: 'Scenario trip',
+            start_date: '2026-09-01',
+            end_date: '2026-09-01',
+            days: 1,
+            hours: 0,
+            type: 'vacation'
+        }, config, existing, []);
+        assert.equal(first.name, 'Scenario trip');
+        assert.throws(
+            () => PTO.validateScenarioBooking({
+                name: 'Zero',
+                start_date: '2026-09-02',
+                end_date: '2026-09-02',
+                days: 0,
+                hours: 0
+            }, config, existing, []),
+            /positive PTO amount/
+        );
+        assert.throws(
+            () => PTO.validateScenarioBooking({
+                name: 'Overlap',
+                start_date: '2026-08-03',
+                end_date: '2026-08-03',
+                days: 1,
+                hours: 0
+            }, config, existing, []),
+            /overlap/i
+        );
+        const summary = PTO.calculateScenarioSummary(2026, config, existing, [
+            { name: 'A', bookings: [first] },
+            { name: 'B', bookings: [] }
+        ]);
+        assert.equal(summary.scenarios[0].total_used, 2);
+        assert.equal(summary.scenarios[1].total_used, 1);
+        assert.equal(existing.length, 1);
+        assert.equal(summary.scenarios[0].bookings.length, 1);
+        summary.scenarios[0].bookings.push({ name: 'local only' });
+        assert.equal(summary.scenarios[1].bookings.length, 0);
+    });
     assert.equal(Array.isArray(suggestions.suggestions), true);
 });
 
