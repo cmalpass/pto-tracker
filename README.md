@@ -1,112 +1,78 @@
 # PTO Tracker
 
-A modern web application to calculate, track, and forecast accrued Paid Time Off (PTO).
+A browser-native PTO calculator, planner, and forecast tool. Your configuration,
+vacations, and notes stay in the current browser profile; there are no accounts,
+server-side database, sync, or authentication features.
 
 ## Features
 
-- Dashboard with PTO balance, accrued YTD, used YTD
-- Monthly calendar with US holidays and vacation overlays
-- Add/delete planned vacations with auto-calculated business days
-- Chart.js forecast visualization with monthly breakdown
-- Configurable accrual rates, pay periods, carryover limits
-- Configurable IANA timezone for local date and year boundaries
+- Dashboard with PTO balance, accrual, used YTD, and scheduled PTO
+- Monthly calendar with holidays and vacation overlays
+- Accrual, carryover, vesting, holiday, conflict, forecast, suggestion, and heatmap calculations
+- Configurable accrual policy and IANA timezone
+- IndexedDB persistence with a localStorage fallback
+- Versioned JSON backup/restore plus client-side CSV and Excel-compatible exports
 
-## Tech Stack
+## Architecture
 
-- **Backend:** Flask (Python) + SQLite
-- **Frontend:** Vanilla HTML/CSS/JS + Chart.js
-- **Testing:** Playwright
+Flask is retained as a small static app server for local development and deployment.
+The browser loads `static/js/store.js`, a versioned asynchronous storage wrapper, and
+`static/js/pto.js`, the pure client-side calculation engine. No user data is sent to
+Flask. Storage persistence is requested through the browser Storage API when the app
+first loads.
+
+Dates are stored and exported as canonical `YYYY-MM-DD` strings. The configured IANA
+timezone controls the browser-local current date and year boundaries without converting
+stored date values.
+
+**Backup note:** browser profile storage is device-specific and can be lost when site
+data is cleared or evicted. Use Export JSON regularly, especially before clearing
+browser data or changing devices.
 
 ## Local Development
-
-### Prerequisites
-
-- Python 3.12+ (tested with Python 3.13)
-- macOS, Linux, or Windows
 
 ### Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### Run The App
+### Run the static app
 
 ```bash
 source .venv/bin/activate
 python app.py
 ```
 
-Default URL: `http://127.0.0.1:5000`
-
-State-changing browser requests use a same-origin CSRF cookie and header token. For
-cookie-less API clients, set `PTO_API_KEY` and send `Authorization: Bearer <key>`.
-When `PTO_REQUIRE_AUTH=true`, valid configured Basic Auth credentials also identify
-cookie-less API requests.
-### Date and timezone behavior
-
-Vacation dates are persisted as canonical `YYYY-MM-DD` date strings and are never
-converted between timezones. The app uses the configured IANA timezone only when
-calculating the current local date, current year, balances, forecasts, statistics,
-suggestions, exports, and frontend defaults. The safe default is `UTC`; configure
-another timezone in Settings (for example, `America/New_York`).
-
-### macOS Port 5000 Conflict (AirPlay Receiver / Control Center)
-
-On some macOS systems, port 5000 is already used by `ControlCenter`.
-If you see `Address already in use`, run on port 5001:
+Open `http://127.0.0.1:5000`. If macOS has port 5000 occupied, run:
 
 ```bash
-source .venv/bin/activate
-python -c "from app import app; app.run(debug=True, host='0.0.0.0', port=5001)"
+python -c "from app import app; app.run(debug=False, host='127.0.0.1', port=5001)"
 ```
 
-Then open: `http://127.0.0.1:5001`
+### Tests
 
-### Debugging In VS Code
-
-1. Select the `.venv` interpreter.
-2. Create a Python launch configuration that runs `app.py`.
-3. Start debugging with breakpoints in `app.py`.
-
-### Verify The App Is Running
+Install Playwright browsers once:
 
 ```bash
-curl -s http://127.0.0.1:5000/api/config
-```
-
-If running on 5001, use:
-
-```bash
-curl -s http://127.0.0.1:5001/api/config
-```
-
-## Running Tests
-
-The test file uses Playwright and expects the app at `http://localhost:5000`.
-
-Install browsers once:
-
-```bash
-source .venv/bin/activate
 python -m playwright install
 ```
 
-Run tests:
+Run the client calculation checks:
 
 ```bash
-source .venv/bin/activate
+node --test tests/client.test.js
+```
+
+With the app running at port 5000, run the browser checks:
+
+```bash
 python tests/test_app.py
 ```
 
-If your app is running on port 5001, update `BASE_URL` in `tests/test_app.py` or run the app on 5000.
-
 ## Docker
-
-Build and run with Docker Compose:
 
 ```bash
 docker compose up --build

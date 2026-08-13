@@ -1,75 +1,127 @@
 /** PTO Tracker - Main Application */
-const API = {
-    authHeader: null,
-    async request(path, options = {}, allowAuthPrompt = true) {
-        const headers = { ...(options.headers || {}) };
-        if (this.authHeader) headers.Authorization = this.authHeader;
-        if (options.method && !['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase())) {
-            const csrfCookie = document.cookie.split('; ').find(cookie => cookie.startsWith('pto_csrf_token='));
-            if (csrfCookie) headers['X-CSRF-Token'] = decodeURIComponent(csrfCookie.split('=').slice(1).join('='));
-        }
-        const res = await fetch(path, { ...options, headers });
-        if (res.status === 401 && options.method && allowAuthPrompt) {
-            const username = window.prompt('PTO Tracker username:');
-            const password = username === null ? null : window.prompt('PTO Tracker password:');
-            if (username && password !== null) {
-                this.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
-                return this.request(path, options, false);
-            }
+const modulesReady = Promise.resolve();
 
-        }
-        const payload = await res.json();
-        if (!res.ok) throw new Error(payload.error || `Request failed (${res.status})`);
-        return payload;
-    },
-    async get(path) {
-        return this.request(path);
-    },
-    async post(path, data) {
-        return this.request(path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-    },
-    async put(path, data) {
-        return this.request(path, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-    },
-    async delete(path) {
-        return this.request(path, { method: 'DELETE' });
-    }
-};
+const currentUtcYear = new Date().getUTCFullYear();
+const DEFAULT_CONFIG = Object.freeze({
+    holiday_country: 'US',
+    pto_accrual_per_pay_period: 1,
+    pto_accrual_type: 'days',
+    pto_hours_per_day: 8,
+    pto_holidays_require_pto: true,
+    pay_periods_per_year: 26,
+    accrual_start_date: `${currentUtcYear}-01-01`,
+    accrual_method: 'pro-rata',
+    pto_carryover_limit: 40,
+    pto_uses_rollover: true,
+    pto_cashout_rate: 0,
+    pto_lose_above_limit: true,
+    pto_start_year: currentUtcYear,
+    pto_vesting_schedule: 'immediate',
+    pto_grace_period_days: 0,
+    timezone: 'UTC'
+});
 
-async function parseResponse(res) {
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-        throw new Error(data?.error || data?.message || res.statusText || `Request failed (${res.status})`);
+const POLICY_PRESETS = Object.freeze({
+    standard: {
+        name: 'Standard PTO',
+        description: 'A balanced US-style policy with prorated accrual and limited rollover.',
+        settings: {
+            pto_accrual_per_pay_period: 1, pto_accrual_type: 'days', pto_hours_per_day: 8,
+            pto_holidays_require_pto: false, pay_periods_per_year: 26,
+            accrual_start_date: `${currentUtcYear}-01-01`, accrual_method: 'pro-rata',
+            pto_carryover_limit: 40, pto_uses_rollover: true,
+            pto_lose_above_limit: true, pto_vesting_schedule: 'immediate'
+        }
+    },
+    generous: {
+        name: 'Generous Rollover',
+        description: 'Higher accrual with rollover enabled and no automatic cap.',
+        settings: {
+            pto_accrual_per_pay_period: 1.5, pto_accrual_type: 'days', pto_hours_per_day: 8,
+            pto_holidays_require_pto: false, pay_periods_per_year: 26,
+            accrual_start_date: `${currentUtcYear}-01-01`, accrual_method: 'pro-rata',
+            pto_carryover_limit: 80, pto_uses_rollover: true,
+            pto_lose_above_limit: false, pto_vesting_schedule: 'immediate'
+        }
+    },
+    'use-it-or-lose-it': {
+        name: 'Use It or Lose It',
+        description: 'Accrual resets at year end with no rollover.',
+        settings: {
+            pto_accrual_per_pay_period: 1, pto_accrual_type: 'days', pto_hours_per_day: 8,
+            pto_holidays_require_pto: false, pay_periods_per_year: 26,
+            accrual_start_date: `${currentUtcYear}-01-01`, accrual_method: 'pro-rata',
+            pto_carryover_limit: 0, pto_uses_rollover: false,
+            pto_lose_above_limit: true, pto_vesting_schedule: 'immediate'
+        }
     }
-    return data;
+});
+
+async function getStoredConfig() {
+    await modulesReady;
+    const stored = await PTOStore.getConfig();
+    const config = { ...DEFAULT_CONFIG, ...(stored || {}) };
+    if (!stored) await PTOStore.putConfig(config);
+    return config;
 }
 
-function buildSuggestionPath() {
-    const params = new URLSearchParams({ year: String(state.currentYear) });
-    const filters = state.suggestionFilters || {};
-    const mapping = {
-        minPto: 'min_pto_days',
-        maxPto: 'max_pto_days',
-        minImpact: 'min_impact',
-        monthStart: 'month_start',
-        monthEnd: 'month_end',
-        sortBy: 'sort_by'
+async function getRuntimeConfig() {
+    const config = await getStoredConfig();
+    return {
+        ...config,
+        current_date: PTO.getLocalToday(config),
+        current_year: PTO.getLocalYear(config)
     };
-    Object.entries(mapping).forEach(([key, queryKey]) => {
-        if (filters[key] !== null && filters[key] !== undefined && filters[key] !== '') {
-            params.set(queryKey, filters[key]);
-        }
-    });
-    if (filters.categories?.length) params.set('categories', filters.categories.join(','));
-    return `/api/vacations/suggestions?${params.toString()}`;
+}
+
+function suggestionOptions() {
+    const filters = state.suggestionFilters || {};
+    return {
+        today: state.today || PTO.getLocalToday(state.config),
+        min_pto_days: filters.minPto,
+        max_pto_days: filters.maxPto,
+        min_impact: filters.minImpact,
+        month_start: filters.monthStart,
+        month_end: filters.monthEnd,
+        categories: filters.categories || [],
+        sort_by: filters.sortBy || 'impact'
+    };
+}
+
+function generateSuggestions() {
+    return PTO.generateVacationSuggestions(
+        state.currentYear, state.config, state.vacations, suggestionOptions());
+}
+
+function calendarData(year, month) {
+    const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const holidays = Object.entries(PTO.getHolidays(year, state.config))
+        .filter(([date]) => date.startsWith(monthPrefix))
+        .map(([date, name]) => ({ date, name, type: 'holiday' }));
+    const vacations = state.vacations
+        .filter(item => item.start_date <= `${monthPrefix}-31` && item.end_date >= `${monthPrefix}-01`)
+        .map(item => ({ ...item, type: 'vacation' }));
+    return { events: [...holidays, ...vacations] };
+}
+
+function configWarnings(config) {
+    const warnings = [];
+    if (Number(config.pto_accrual_per_pay_period) <= 0) {
+        warnings.push({ severity: 'error', message: 'Accrual per pay period must be greater than zero.' });
+    }
+    if (Number(config.pay_periods_per_year) <= 0) {
+        warnings.push({ severity: 'error', message: 'Pay periods per year must be greater than zero.' });
+    }
+    if (Number(config.pto_carryover_limit) < 0) {
+        warnings.push({ severity: 'error', message: 'Carryover limit cannot be negative.' });
+    }
+    if (!PTO.isValidTimezone(config.timezone)) {
+        warnings.push({ severity: 'error', message: 'Timezone must be a valid IANA timezone.' });
+    }
+    if (!PTO.isCanonicalDate(config.accrual_start_date)) {
+        warnings.push({ severity: 'error', message: 'Accrual start date must use YYYY-MM-DD format.' });
+    }
+    return warnings;
 }
 
 function renderSuggestionFilters(availableCategories) {
@@ -124,9 +176,9 @@ function updateSuggestionFilters() {
     localStorage.setItem('pto-suggestion-filters', JSON.stringify(state.suggestionFilters));
     renderSuggestionFilters(state.vacationSuggestions?.available_categories || []);
     clearTimeout(state.suggestionAnalysisTimer);
-    state.suggestionAnalysisTimer = setTimeout(async () => {
+    state.suggestionAnalysisTimer = setTimeout(() => {
         try {
-            state.vacationSuggestions = await API.get(buildSuggestionPath());
+            state.vacationSuggestions = generateSuggestions();
             renderSuggestionFilters(state.vacationSuggestions.available_categories || []);
             renderVacationSuggestions();
         } catch (err) {
@@ -165,14 +217,26 @@ const state = {
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-document.addEventListener('DOMContentLoaded', () => {
-    setupThemeToggle();
-    setupTabs();
-    setupSettings();
-    setupVacationModal();
-    setupVacationList();
-    setupCalendar();
-    loadDashboard();
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        await modulesReady;
+        setupThemeToggle();
+        setupTabs();
+        setupSettings();
+        setupVacationModal();
+        setupVacationList();
+        setupCalendar();
+        await setupNotes();
+        setupDataTransfer();
+        await loadDashboard();
+        const persisted = await PTOStore.requestPersistentStorage();
+        if (navigator.storage?.persist && !persisted) {
+            showToast('Browser storage persistence was not granted; export backups regularly.', 'warning');
+        }
+    } catch (err) {
+        console.error('Failed to start PTO Tracker:', err);
+        showToast('Unable to start PTO Tracker', 'error');
+    }
 });
 
 function setupTabs() {
@@ -208,17 +272,29 @@ function setupThemeToggle() {
 
 async function loadDashboard() {
     try {
-        const config = await API.get('/api/config');
+        const [config, vacations] = await Promise.all([
+            getRuntimeConfig(),
+            PTOStore.listVacations()
+        ]);
         state.config = config;
+        state.vacations = vacations;
         state.today = config.current_date;
         state.currentYear = config.current_year;
         state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
-        loadForecast();
+        await loadForecast();
         const now = parseIsoDateToLocal(state.today);
-        const [balance, stats] = await Promise.all([
-            API.get(`/api/balance/${config.current_date}`),
-            API.get('/api/stats')
-        ]);
+        const balance = PTO.calculateBalanceOnDate(config.current_date, config, vacations);
+        const yearlyForecast = PTO.generateYearlyForecast(config.current_year, config, vacations);
+        const remainingUsage = PTO.calculateVacationUsageInRange(
+            config.current_date, `${config.current_year}-12-31`, config, vacations);
+        const stats = {
+            current_balance: balance,
+            yearly_forecast: yearlyForecast,
+            upcoming_vacations: vacations.filter(item => item.end_date >= config.current_date).length,
+            remaining_scheduled_pto_days: config.pto_accrual_type === 'hours'
+                ? (remainingUsage.days * Number(config.pto_hours_per_day || 8)) + remainingUsage.hours
+                : remainingUsage.days + (remainingUsage.hours / Number(config.pto_hours_per_day || 8))
+        };
         document.getElementById('today-date').textContent = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         document.getElementById('current-month-name').textContent = MONTHS[now.getMonth()];
         const unitLabel = config.pto_accrual_type === 'hours' ? 'hours available' : 'days available';
@@ -245,6 +321,8 @@ async function loadDashboard() {
         const payPeriodDays = 365.25 / config.pay_periods_per_year;
         const nextAccrual = new Date(now.getTime() + payPeriodDays * 86400000);
         document.getElementById('next-accrual-date').textContent = nextAccrual.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        state.calendarEvents[`${now.getFullYear()}-${now.getMonth()}`] =
+            expandCalendarEvents(calendarData(now.getFullYear(), now.getMonth()).events, now.getFullYear(), now.getMonth());
         renderMiniCalendar();
     } catch (err) {
         console.error('Failed to load dashboard:', err);
@@ -393,12 +471,14 @@ async function renderCalendar() {
     const title = `${MONTHS[state.currentMonth]} ${state.currentYear}`;
     document.getElementById('calendar-title').textContent = title;
     try {
-        const response = await API.get(`/api/calendar/${state.currentYear}/${state.currentMonth + 1}`);
+        if (!state.vacations.length) state.vacations = await PTOStore.listVacations();
+        const response = calendarData(state.currentYear, state.currentMonth);
         const monthEvents = expandCalendarEvents(
             response.events,
             state.currentYear,
             state.currentMonth
         );
+        state.calendarEvents[`${state.currentYear}-${state.currentMonth}`] = monthEvents;
         const container = document.getElementById('calendar-grid');
         let html = `<div class="cal-header">${DAYS.map(d => `<span>${d}</span>`).join('')}</div>`;
         const firstDay = new Date(state.currentYear, state.currentMonth, 1).getDay();
@@ -440,19 +520,22 @@ async function renderCalendar() {
 
 async function loadVacations() {
     try {
-        const [vacations, suggestions] = await Promise.all([
-            API.get('/api/vacations'),
-            API.get(buildSuggestionPath())
-        ]);
+        const vacations = await PTOStore.listVacations();
         state.vacations = vacations;
-        state.vacationSuggestions = suggestions;
-        renderSuggestionFilters(suggestions.available_categories || []);
+        state.vacationSuggestions = generateSuggestions();
+        renderSuggestionFilters(state.vacationSuggestions.available_categories || []);
         renderVacationsList();
         renderVacationSuggestions();
     } catch (err) {
         console.error('Failed to load vacations:', err);
         showToast('Failed to load vacations', 'error');
     }
+}
+
+async function refreshViews() {
+    await loadDashboard();
+    await loadVacations();
+    await renderCalendar();
 }
 
 function renderVacationsList() {
@@ -654,7 +737,8 @@ async function addSuggestedVacation(index) {
                 return day < existingStart || day > existingEnd;
             }).length;
 
-            await API.put(`/api/vacations/${targetVacation.id}`, {
+            await PTOStore.putVacation({
+                ...targetVacation,
                 name: targetVacation.name,
                 start_date: toIsoDate(mergedStart),
                 end_date: toIsoDate(mergedEnd),
@@ -664,7 +748,7 @@ async function addSuggestedVacation(index) {
             });
             showToast('Suggestion merged into existing vacation', 'success');
         } else {
-            await API.post('/api/vacations', {
+            await PTOStore.putVacation({
                 name: suggestion.name || 'Suggested Vacation',
                 start_date: suggestion.start_date,
                 end_date: suggestion.end_date,
@@ -674,10 +758,7 @@ async function addSuggestedVacation(index) {
             });
             showToast('Suggested vacation added', 'success');
         }
-        await loadVacations();
-        loadDashboard();
-        loadForecast();
-        renderCalendar();
+        await refreshViews();
     } catch (err) {
         console.error('Failed to add suggested vacation:', err);
         showToast('Failed to add suggestion', 'error');
@@ -748,10 +829,9 @@ function setupVacationList() {
 async function deleteVacation(id) {
     if (!confirm('Delete this vacation?')) return;
     try {
-        await API.delete(`/api/vacations/${id}`);
+        await PTOStore.deleteVacation(id);
         showToast('Vacation deleted', 'success');
-        loadVacations();
-        loadDashboard();
+        await refreshViews();
     } catch (err) {
         showToast('Failed to delete', 'error');
     }
@@ -797,20 +877,26 @@ function setupVacationModal() {
             auto_days: autoDays
         };
         try {
+            const conflict = PTO.detectVacationConflicts(
+                data.start_date, data.end_date, state.vacations, state.editingVacationId);
+            if (conflict.has_conflicts) throw new Error(conflict.error);
+            const analysis = PTO.analyzeVacation(
+                data.start_date, data.end_date, data.days, data.hours,
+                state.config, state.vacations, state.editingVacationId);
+            const blockingWarning = analysis.warnings.find(item => item.severity === 'error');
+            if (blockingWarning) throw new Error(blockingWarning.message);
             if (state.editingVacationId) {
-                const response = await API.put(`/api/vacations/${state.editingVacationId}`, data);
+                const existing = state.vacations.find(item => item.id === state.editingVacationId) || {};
+                await PTOStore.putVacation({ ...existing, ...data, id: state.editingVacationId });
                 showToast('Vacation updated!', 'success');
-                showWarningToast(response.warnings);
+                showWarningToast(analysis.warnings);
             } else {
-                const response = await API.post('/api/vacations', data);
+                await PTOStore.putVacation(data);
                 showToast('Vacation added!', 'success');
-                showWarningToast(response.warnings);
+                showWarningToast(analysis.warnings);
             }
             closeVacationModal();
-            loadVacations();
-            loadDashboard();
-            loadForecast();
-            renderCalendar();
+            await refreshViews();
         } catch (err) {
             showToast(err.message || 'Failed to save vacation', 'error');
         }
@@ -818,9 +904,9 @@ function setupVacationModal() {
 
     const refreshBtn = document.getElementById('btn-refresh-suggestions');
     if (refreshBtn) {
-        refreshBtn.addEventListener('click', async () => {
+        refreshBtn.addEventListener('click', () => {
             try {
-                state.vacationSuggestions = await API.get(buildSuggestionPath());
+                state.vacationSuggestions = generateSuggestions();
                 renderSuggestionFilters(state.vacationSuggestions.available_categories || []);
                 renderVacationSuggestions();
                 showToast('Suggestions refreshed', 'success');
@@ -876,13 +962,9 @@ async function analyzeVacation() {
     }
     const requestId = ++state.vacationAnalysisRequestId;
     try {
-        const result = await API.post('/api/vacations/analyze', {
-            start_date: start,
-            end_date: end,
-            days: Number(form.days.value) || 0,
-            hours: Number(form.hours.value) || 0,
-            vacation_id: state.editingVacationId
-        });
+        const result = PTO.analyzeVacation(
+            start, end, Number(form.days.value) || 0, Number(form.hours.value) || 0,
+            state.config, state.vacations, state.editingVacationId);
         if (requestId === state.vacationAnalysisRequestId) renderVacationWarnings(result.warnings, result.hints);
     } catch (err) {
         if (requestId === state.vacationAnalysisRequestId) renderVacationWarnings([{
@@ -943,21 +1025,18 @@ async function calcVacationDays() {
     if (autoDays) {
         const requestId = ++state.vacationCalcRequestId;
         try {
-            const result = await API.get(`/api/vacations/calculate-days?start_date=${start}&end_date=${end}`);
-            // Ignore stale responses if user changed dates while waiting.
+            const result = { days: PTO.getVacationDays(start, end, state.config) };
             if (requestId !== state.vacationCalcRequestId) return;
             if (typeof result.days === 'number') {
                 days = result.days;
             }
         } catch (err) {
-            // Fallback to weekday-only client estimate if API call fails.
-            const current = new Date(startDate);
-            while (current <= endDate) {
-                if (current.getDay() !== 0 && current.getDay() !== 6) {
-                    days += 1;
-                }
-                current.setDate(current.getDate() + 1);
-            }
+            daysInput.value = 0;
+            renderVacationWarnings([{
+                severity: 'error',
+                message: err.message || 'Unable to calculate vacation days.'
+            }]);
+            return;
         }
     }
     daysInput.value = days;
@@ -984,6 +1063,131 @@ function closeVacationModal() {
     document.getElementById('btn-submit-vacation').textContent = 'Add Vacation';
 }
 
+function setupDataTransfer() {
+    const jsonExportLink = document.getElementById('export-json');
+    const jsonImportLink = document.getElementById('import-json');
+    const csvExportLink = document.getElementById('export-csv');
+    const excelExportLink = document.getElementById('export-excel');
+    if (!jsonExportLink || !jsonImportLink) return;
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'application/json,.json';
+    fileInput.hidden = true;
+    jsonImportLink.after(fileInput);
+
+    jsonExportLink.addEventListener('click', async event => {
+        event.preventDefault();
+        try {
+            const contents = await PTOStore.exportJSON(2);
+            const url = URL.createObjectURL(new Blob([contents], { type: 'application/json' }));
+            const download = document.createElement('a');
+            download.href = url;
+            download.download = `pto-tracker-${getTodayIsoDate()}.json`;
+            download.click();
+            URL.revokeObjectURL(url);
+            showToast('PTO data exported', 'success');
+        } catch (err) {
+            showToast(err.message || 'Failed to export data', 'error');
+        }
+    });
+    jsonImportLink.addEventListener('click', event => {
+        event.preventDefault();
+        fileInput.click();
+    });
+    fileInput.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        try {
+            if (!window.confirm('Importing a backup will replace current browser data. Continue?')) {
+                return;
+            }
+            await PTOStore.importJSON(await file.text());
+            state.config = await getRuntimeConfig();
+            await refreshViews();
+            await renderStoredNotes();
+            showToast('PTO data imported', 'success');
+        } catch (err) {
+            showToast(err.message || 'Failed to import data', 'error');
+        } finally {
+            fileInput.value = '';
+        }
+    });
+
+    const downloadText = (contents, filename, type) => {
+        const url = URL.createObjectURL(new Blob([contents], { type }));
+        const download = document.createElement('a');
+        download.href = url;
+        download.download = filename;
+        download.click();
+        URL.revokeObjectURL(url);
+    };
+    const escapeCsv = value => {
+        const text = String(value ?? '');
+        return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const exportRows = () => [
+        ['Name', 'Start Date', 'End Date', 'Days', 'Hours'],
+        ...state.vacations.map(v => [v.name, v.start_date, v.end_date, v.days, v.hours])
+    ];
+    csvExportLink?.addEventListener('click', event => {
+        event.preventDefault();
+        downloadText(
+            exportRows().map(row => row.map(escapeCsv).join(',')).join('\n'),
+            `pto-tracker-${getTodayIsoDate()}.csv`,
+            'text/csv'
+        );
+    });
+    excelExportLink?.addEventListener('click', event => {
+        event.preventDefault();
+        const rows = exportRows().map(row => `<tr>${row.map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
+        downloadText(
+            `<table><thead>${rows.split('</tr>')[0]}</tr></thead><tbody>${rows.split('</tr>').slice(1).join('</tr>')}</tbody></table>`,
+            `pto-tracker-${getTodayIsoDate()}.xls`,
+            'application/vnd.ms-excel'
+        );
+    });
+}
+
+async function setupNotes() {
+    const form = document.getElementById('note-form');
+    const dateInput = document.getElementById('note-date');
+    if (!form || !dateInput) return;
+    dateInput.value = (await getRuntimeConfig()).current_date;
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        try {
+            await PTOStore.putNote({
+                date: dateInput.value,
+                text: document.getElementById('note-text').value.trim()
+            });
+            document.getElementById('note-text').value = '';
+            await renderStoredNotes();
+        } catch (error) {
+            showToast(error.message || 'Failed to save note', 'error');
+        }
+    });
+    renderStoredNotes().catch(error => {
+        console.error('Failed to load notes:', error);
+        showToast('Failed to load notes', 'error');
+    });
+}
+
+async function renderStoredNotes() {
+    const list = document.getElementById('notes-list');
+    if (!list) return;
+    const notes = await PTOStore.listNotes();
+    list.innerHTML = notes.length ? notes.map(note => `
+        <div class="note-item"><strong>${escapeHtml(note.date)}</strong> ${escapeHtml(note.text)}
+            <button class="btn btn-sm" data-local-note-id="${note.id}">Delete</button>
+        </div>`).join('') : '<p class="empty-hint">No notes yet</p>';
+    list.querySelectorAll('[data-local-note-id]').forEach(button => {
+        button.addEventListener('click', async () => {
+            await PTOStore.deleteNote(Number(button.dataset.localNoteId));
+            await renderStoredNotes();
+        });
+    });
+}
+
 function setupSettings() {
     document.getElementById('btn-settings').addEventListener('click', openSettings);
     document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
@@ -1003,13 +1207,18 @@ function setupSettings() {
             else data[el.name] = el.value;
         }
         try {
-            const response = await API.put('/api/config', data);
+            const merged = { ...state.config, ...data };
+            delete merged.current_date;
+            delete merged.current_year;
+            const warnings = configWarnings(merged);
+            const blocking = warnings.find(item => item.severity === 'error');
+            if (blocking) throw new Error(blocking.message);
+            await PTOStore.putConfig(merged);
+            state.config = await getRuntimeConfig();
             showToast('Settings saved!', 'success');
-            showWarningToast(response.warnings);
+            showWarningToast(warnings);
             closeSettings();
-            loadDashboard();
-            loadForecast();
-            loadVacations();
+            await refreshViews();
         } catch (err) {
             showToast(err.message || 'Failed to save settings', 'error');
         }
@@ -1018,7 +1227,7 @@ function setupSettings() {
 
 async function openSettings() {
     try {
-        const config = await API.get('/api/config');
+        const config = await getRuntimeConfig();
         state.config = config;
         resetPolicyPreview();
         loadPolicyPresets().catch((err) => {
@@ -1051,7 +1260,7 @@ function closeSettings() {
 }
 
 async function loadPolicyPresets() {
-    const presets = await API.get('/api/config/presets');
+    const presets = POLICY_PRESETS;
     const select = document.getElementById('policy-preset');
     document.querySelector('.policy-wizard').removeAttribute('aria-disabled');
     select.disabled = false;
@@ -1109,12 +1318,12 @@ async function applyPolicy() {
     if (!preset) return;
     if (!window.confirm(`Apply the "${preset.name}" preset? This will replace the current PTO settings.`)) return;
     try {
-        await API.put('/api/config', preset.settings);
+        const config = { ...DEFAULT_CONFIG, ...preset.settings };
+        await PTOStore.putConfig(config);
+        state.config = await getRuntimeConfig();
         showToast('Policy preset applied!', 'success');
         closeSettings();
-        loadDashboard();
-        loadForecast();
-        loadVacations();
+        await refreshViews();
     } catch (err) {
         showToast(err.message || 'Failed to apply policy preset', 'error');
     }
@@ -1131,7 +1340,9 @@ async function loadForecast() {
     }
     const requestId = ++state.forecastRequestId;
     try {
-        const data = await API.get(`/api/balance?year=${state.currentYear}`);
+        const data = {
+            forecast: PTO.generateYearlyForecast(state.currentYear, state.config, state.vacations)
+        };
         if (requestId !== state.forecastRequestId) return;
         state.forecast = data.forecast || [];
         try {
@@ -1160,9 +1371,10 @@ async function loadMultiYearForecast() {
     const requestId = ++state.multiYearRequestId;
     const stateEl = document.getElementById('multi-year-state');
     try {
-        const data = await API.get(
-            `/api/forecast/multi-year?start_year=${startSelect.value}&years=${countSelect.value}`
-        );
+        const data = {
+            years: PTO.generateMultiYearForecast(
+                Number(startSelect.value), Number(countSelect.value), state.config, state.vacations)
+        };
         if (requestId !== state.multiYearRequestId) return;
         renderMultiYearSummary(data.years || []);
         renderMultiYearChart(data.years || []);
@@ -1241,7 +1453,7 @@ async function loadHeatmap() {
     const grid = document.getElementById('heatmap-grid');
     const legend = document.getElementById('heatmap-legend');
     try {
-        const data = await API.get(`/api/heatmap/${select.value}`);
+        const data = PTO.generateHeatmap(Number(select.value), state.config, state.vacations);
         if (requestId !== state.heatmapRequestId) return;
         if (!data.weeks?.length) {
             stateEl.textContent = 'No heatmap data is available for this year.';
