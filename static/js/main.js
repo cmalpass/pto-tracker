@@ -34,6 +34,7 @@ import {
 import {
     dismissNotification,
     generateNotifications,
+    pruneDismissedFingerprints,
     visibleNotifications
 } from './modules/notifications.js?v=20260813-19';
 import {
@@ -282,7 +283,7 @@ async function loadDashboard() {
         document.getElementById('stat-upcoming').textContent = stats.upcoming_vacations || 0;
         const scheduledPtoDays = stats.remaining_scheduled_pto_days ?? stats.remaining_vacation_days ?? 0;
         document.getElementById('stat-scheduled-pto').textContent = Number(scheduledPtoDays).toFixed(1);
-        document.getElementById('stat-remaining-days').textContent = daysRemainingThisYear();
+        document.getElementById('stat-remaining-days').textContent = daysRemainingThisYear(getTodayDate(), config);
         renderTypeBreakdownDom(typeBreakdown, config.pto_accrual_type === 'hours' ? 'hours' : 'days');
         document.getElementById('dashboard-accrual-per-period').textContent = `${config.pto_accrual_per_pay_period} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
         document.getElementById('pay-periods').textContent = config.pay_periods_per_year;
@@ -308,6 +309,7 @@ function refreshNotifications() {
             vacations: state.vacations,
             today: state.today
         });
+        pruneDismissedFingerprints(state.notificationAlerts);
         state.notifications = visibleNotifications(state.notificationAlerts);
         renderNotificationsDom(state.notifications);
         renderDashboardNotificationDom(state.notifications[0] || null);
@@ -374,14 +376,20 @@ function setupNotifications() {
         });
 }
 
-function currentDaysUsed() {
-    return getTodayDate().getMonth();
-}
-
-function daysRemainingThisYear(today = getTodayDate()) {
+// Counts days until the end of the PTO year that contains `today`. Custom
+// PTO-year boundaries (e.g. July-June fiscal years) end on the configured
+// final date, not December 31; calendar years fall back to Dec 31.
+function daysRemainingThisYear(today = getTodayDate(), config = state.config) {
+    let yearEnd;
+    if (config && globalThis.PTO) {
+        const ptoYear = globalThis.PTO.getPtoYearForDate(toIsoDate(today), config);
+        yearEnd = parseIsoDateToLocal(globalThis.PTO.getPtoYearEnd(ptoYear, config));
+    } else {
+        yearEnd = new Date(today.getFullYear(), 11, 31);
+    }
     const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-    const yearEndUtc = Date.UTC(today.getFullYear(), 11, 31);
-    return Math.round((yearEndUtc - todayUtc) / 86400000);
+    const yearEndUtc = Date.UTC(yearEnd.getFullYear(), yearEnd.getMonth(), yearEnd.getDate());
+    return Math.max(0, Math.round((yearEndUtc - todayUtc) / 86400000));
 }
 
 function ptoUnit(config = state.config) {
@@ -576,8 +584,12 @@ function parseIsoDateToLocal(dateStr) {
     return new Date(year, month - 1, day);
 }
 
+// Fallbacks prefer the configured timezone (PTO.getLocalToday) over the raw
+// UTC date, which is off by a day for users west of UTC near midnight.
 function getTodayIsoDate() {
-    return state.today || new Date().toISOString().split('T')[0];
+    if (state.today) return state.today;
+    if (state.config && globalThis.PTO) return globalThis.PTO.getLocalToday(state.config);
+    return toIsoDate(new Date());
 }
 
 function getTodayDate() {
@@ -967,7 +979,7 @@ function setupVacationExchange(downloadText) {
     const fileInput = document.createElement('input');
     const importModal = document.getElementById('vacation-import-modal');
     const confirmButton = document.getElementById('btn-confirm-vacation-import');
-    if (!exportButton || !importButton || !fileInput || !importModal || !confirmButton) return;
+    if (!exportButton || !importButton || !importModal || !confirmButton) return;
 
     fileInput.id = 'vacation-import-file';
     fileInput.type = 'file';
@@ -1213,7 +1225,7 @@ async function openSettings() {
         document.getElementById('settings-accrual-per-period').value = config.pto_accrual_per_pay_period || 1;
         document.getElementById('hours-per-day').value = config.pto_hours_per_day || 8;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
-        document.getElementById('accrual-method').value = config.accrual_method || 'full';
+        document.getElementById('accrual-method').value = config.accrual_method || DEFAULT_CONFIG.accrual_method;
         document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
         document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
         renderPtoYearBoundaries(config.pto_year_boundaries || []);
@@ -1433,12 +1445,10 @@ async function loadHeatmap() {
         }
         renderHeatmapDom(data);
         grid.querySelectorAll('.heatmap-cell').forEach(cell => cell.addEventListener('click', () => {
-            const heatmapYear = Number(select.value);
+            // Navigate to the month the clicked week actually belongs to. PTO
+            // years with custom boundaries span two calendar years, so snapping
+            // the date into the select's year would land on the wrong month.
             const day = parseIsoDateToLocal(cell.dataset.date);
-            if (day.getFullYear() !== heatmapYear) {
-                day.setFullYear(heatmapYear, day < new Date(heatmapYear, 0, 1) ? 0 : 11,
-                    day < new Date(heatmapYear, 0, 1) ? 1 : 31);
-            }
             state.currentYear = day.getFullYear();
             state.currentMonth = day.getMonth();
             document.querySelector('.nav-tab[data-tab="calendar"]').click();
