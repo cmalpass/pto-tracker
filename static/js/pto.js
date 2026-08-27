@@ -706,17 +706,24 @@
 
     function generateYearlyForecast(year, config, vacations) {
         const normalized = normalizedConfig(config);
+        const yearStart = parseCanonicalDate(ptoYearStart(year, normalized));
         const yearEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
-        return Array.from({ length: 12 }, (_, index) => {
-            const month = index + 1;
-            const end = dateOf(year, month + 1, 0);
+        const monthly = [];
+        let cursor = dateOf(yearStart.getUTCFullYear(), yearStart.getUTCMonth() + 1, 1);
+        for (;;) {
+            const month = cursor.getUTCMonth() + 1;
+            const monthYear = cursor.getUTCFullYear();
+            const end = dateOf(monthYear, month + 1, 0);
             const forecastEnd = end < yearEnd ? end : yearEnd;
-            return {
+            monthly.push({
                 ...calculateBalanceOnDate(formatDate(forecastEnd), normalized, vacations),
-                month: `${year}-${String(month).padStart(2, '0')}`,
-                month_name: MONTH_NAMES[index]
-            };
-        });
+                month: `${monthYear}-${String(month).padStart(2, '0')}`,
+                month_name: MONTH_NAMES[month - 1]
+            });
+            if (end >= yearEnd) break;
+            cursor = dateOf(monthYear, month + 2, 0);
+        }
+        return monthly;
     }
 
     function generateMultiYearForecast(startYear, years, config, vacations) {
@@ -738,8 +745,9 @@
                 : normalized.pto_accrual_type === 'hours'
                     ? usage.days * normalized.pto_hours_per_day + usage.hours
                     : usage.days + usage.hours / normalized.pto_hours_per_day;
-            const yearEndBalance = monthly[11].balance;
-            const limit = monthly[11].limit;
+            const finalMonth = monthly[monthly.length - 1];
+            const yearEndBalance = finalMonth.balance;
+            const limit = finalMonth.limit;
             let carryover = yearEndBalance;
             let forfeited = 0;
             if (!normalized.pto_uses_rollover) {
