@@ -416,3 +416,35 @@ test('migrates legacy fallback records and imports schema v1 backups', async () 
    assert.equal((await PTOStore.listVacations())[0].name, 'Old backup');
    assert.equal((await PTOStore.listVacations())[0].type, 'vacation');
 });
+
+test('normalizes a null accrual_start_date so config merges keep a valid default', async () => {
+   await PTOStore.clear('config');
+   await PTOStore.putConfig({ ...config, accrual_start_date: null });
+   const stored = await PTOStore.getConfig();
+   assert.equal('accrual_start_date' in stored, false);
+
+   globalThis.PTOStore = PTOStore;
+   const stateModule = await import(`../static/js/modules/state.js?null-accrual=${Date.now()}`);
+   const merged = await stateModule.getStoredConfig();
+   assert.notEqual(merged.accrual_start_date, null);
+   assert.ok(PTO.isCanonicalDate(merged.accrual_start_date));
+   assert.ok(PTO.calculateBalanceOnDate('2026-12-31', merged, []).accrued >= 0);
+
+   await PTOStore.importJSON({
+       schemaVersion: 3,
+       data: {
+           config: { ...config, accrual_start_date: null },
+           vacations: [],
+           notes: []
+       }
+   });
+   const imported = await PTOStore.getConfig();
+   assert.equal('accrual_start_date' in imported, false);
+});
+
+test('rejects invalid accrual_start_date strings on config write', async () => {
+   await assert.rejects(
+       () => PTOStore.putConfig({ ...config, accrual_start_date: '01/01/2026' }),
+       /accrual_start_date must use YYYY-MM-DD/
+   );
+});

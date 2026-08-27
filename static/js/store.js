@@ -91,7 +91,13 @@
         }
         const record = clone(value);
         if (storeName === 'config') {
-            if (record.accrual_start_date != null && !isCanonicalDate(record.accrual_start_date)) {
+            if (record.accrual_start_date == null) {
+                // An explicit null or missing value means "no stored value"; the
+                // DEFAULT_CONFIG merge in state.js supplies the default. Keeping the
+                // key with a null value would override the default and crash every
+                // accrual calculation (see issue #116).
+                delete record.accrual_start_date;
+            } else if (!isCanonicalDate(record.accrual_start_date)) {
                 throw new TypeError('accrual_start_date must use YYYY-MM-DD format');
             }
             if (record.timezone != null) {
