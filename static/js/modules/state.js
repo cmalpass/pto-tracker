@@ -127,7 +127,11 @@ export const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export async function getStoredConfig() {
     const stored = await globalThis.PTOStore.getConfig();
-    const config = { ...DEFAULT_CONFIG, ...(stored || {}) };
+    // Stored nulls never override defaults: object spread would keep them (see #116).
+    const overrides = Object.fromEntries(
+        Object.entries(stored || {}).filter(([, value]) => value != null)
+    );
+    const config = { ...DEFAULT_CONFIG, ...overrides };
     if (!stored) await globalThis.PTOStore.putConfig(config);
     return config;
 }
