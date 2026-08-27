@@ -1015,3 +1015,44 @@ test('suggestion engine and heatmap honor custom PTO-year boundaries', () => {
     assert.ok(earlyWeek.pto_days_needed > 0, 'early PTO-year week should have PTO candidates');
     assert.ok(earlyWeek.score > 0, 'early PTO-year week should score');
 });
+
+test('engine config defaults match the settings defaults when keys are missing', () => {
+    const { DEFAULT_CONFIG } = require('../static/js/modules/state.js');
+
+    // A policy with both `accrual_method` and `pto_lose_above_limit` omitted.
+    const base = {
+        ...config,
+        accrual_start_date: '2025-01-01',
+        pto_carryover_limit: 5,
+        pto_uses_rollover: true
+    };
+    const { accrual_method, pto_lose_above_limit, ...missing } = base;
+    void accrual_method; void pto_lose_above_limit;
+
+    // accrual_method: a missing key must accrue like DEFAULT_CONFIG (pro-rata
+    // business days), not like the 'full' calendar-day method.
+    const accrualTarget = '2026-06-30';
+    const defaultAccrual = PTO.calculateBalanceOnDate(accrualTarget, missing, []);
+    assert.deepEqual(
+        defaultAccrual,
+        PTO.calculateBalanceOnDate(accrualTarget, { ...missing, accrual_method: DEFAULT_CONFIG.accrual_method }, [])
+    );
+    assert.notDeepEqual(
+        defaultAccrual,
+        PTO.calculateBalanceOnDate(accrualTarget, { ...missing, accrual_method: 'full' }, [])
+    );
+
+    // pto_lose_above_limit: a missing key must cap the 2025 -> 2026 carryover
+    // like DEFAULT_CONFIG (true), not carry the full balance forward.
+    const carryTarget = '2026-01-15';
+    const defaultCarry = PTO.calculateBalanceOnDate(carryTarget, missing, []);
+    assert.deepEqual(
+        defaultCarry,
+        PTO.calculateBalanceOnDate(carryTarget, { ...missing, pto_lose_above_limit: DEFAULT_CONFIG.pto_lose_above_limit }, [])
+    );
+    assert.notDeepEqual(
+        defaultCarry,
+        PTO.calculateBalanceOnDate(carryTarget, { ...missing, pto_lose_above_limit: false }, [])
+    );
+    assert.equal(defaultCarry.carry, 5);
+});

@@ -161,7 +161,9 @@
             accrual_method: source.accrual_method || 'pro-rata',
             pto_carryover_limit: numberValue(source.pto_carryover_limit, 40),
             pto_uses_rollover: boolValue(source.pto_uses_rollover, true),
-            pto_lose_above_limit: boolValue(source.pto_lose_above_limit, false),
+            // Match DEFAULT_CONFIG.pto_lose_above_limit (true) so a missing key
+            // behaves the same in the engine as in the settings UI.
+            pto_lose_above_limit: boolValue(source.pto_lose_above_limit, true),
             forecast_baseline_enabled: boolValue(source.forecast_baseline_enabled, false),
             forecast_baseline_date: source.forecast_baseline_date || source.accrual_start_date,
             forecast_baseline_balance: numberValue(source.forecast_baseline_balance, 0),
