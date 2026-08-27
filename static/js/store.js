@@ -116,6 +116,10 @@
                     && !isQuarterHour(Number(record.pto_hours_per_day))) {
                 throw new TypeError('pto_hours_per_day must use 0.25-hour increments');
             }
+            const boundaryErrors = globalThis.PTO.validatePtoYearBoundaries(record.pto_year_boundaries);
+            if (boundaryErrors.length) {
+                throw new TypeError(boundaryErrors.join(' '));
+            }
             record.id = 'config';
         } else if (storeName === 'vacations') {
             if (!isCanonicalDate(record.start_date) || !isCanonicalDate(record.end_date)) {

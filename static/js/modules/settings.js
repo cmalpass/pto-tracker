@@ -35,37 +35,7 @@ export function configWarnings(config) {
             warnings.push({ severity: 'error', message: 'Available balance date cannot be before the accrual start date.' });
         }
     }
-    const boundaries = Array.isArray(config.pto_year_boundaries)
-        ? config.pto_year_boundaries : [];
-    const years = new Set();
-    const dates = new Set();
-    let previousDate = null;
-    boundaries.forEach((boundary, index) => {
-        const year = Number(boundary?.year);
-        const finalDate = boundary?.final_date;
-        if (!Number.isInteger(year) || year < 1) {
-            warnings.push({ severity: 'error', message: `PTO year boundary ${index + 1} must use a valid year.` });
-            return;
-        }
-        if (!globalThis.PTO.isCanonicalDate(finalDate)) {
-            warnings.push({ severity: 'error', message: `PTO year ${year} final day must use YYYY-MM-DD format.` });
-            return;
-        }
-        if (finalDate.slice(0, 4) !== String(year)) {
-            warnings.push({ severity: 'error', message: `PTO year ${year} final day must be within ${year}.` });
-        }
-        if (years.has(year)) {
-            warnings.push({ severity: 'error', message: `PTO year ${year} is configured more than once.` });
-        }
-        if (dates.has(finalDate)) {
-            warnings.push({ severity: 'error', message: `PTO boundary date ${finalDate} is configured more than once.` });
-        }
-        if (previousDate && finalDate <= previousDate) {
-            warnings.push({ severity: 'error', message: 'PTO year boundary dates must be unique and chronological.' });
-        }
-        years.add(year);
-        dates.add(finalDate);
-        previousDate = finalDate;
-    });
+    globalThis.PTO.validatePtoYearBoundaries(config.pto_year_boundaries)
+        .forEach(message => warnings.push({ severity: 'error', message }));
     return warnings;
 }

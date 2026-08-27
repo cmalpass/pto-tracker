@@ -580,6 +580,81 @@ async def test_module_loading_and_browser_value_escaping(browser):
         await context.close()
 
 
+async def test_import_rejects_invalid_pto_year_boundaries(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.evaluate(
+            """async () => {
+                await PTOStore.putConfig({
+                    holiday_country: 'US',
+                    pto_accrual_per_pay_period: 1,
+                    pto_hours_per_day: 8,
+                    pay_periods_per_year: 26,
+                    accrual_start_date: '2026-01-01',
+                    accrual_method: 'pro-rata',
+                    timezone: 'UTC',
+                    pto_year_boundaries: [{ year: 2025, final_date: '2025-12-31' }]
+                });
+                await PTOStore.putVacation({
+                    name: 'Kept trip',
+                    start_date: '2026-08-03',
+                    end_date: '2026-08-03',
+                    days: 1,
+                    hours: 0
+                });
+            }"""
+        )
+        payload = {
+            "schemaVersion": 3,
+            "data": {
+                "config": {
+                    "accrual_start_date": "2026-01-01",
+                    "pto_year_boundaries": [{"year": 2026, "final_date": "2027-01-15"}],
+                },
+                "vacations": [{
+                    "id": 55,
+                    "name": "Should not appear",
+                    "start_date": "2026-09-01",
+                    "end_date": "2026-09-01",
+                    "days": 1,
+                    "hours": 0,
+                }],
+                "notes": [],
+            },
+        }
+        await page.click("#tab-forecast-tab")
+        await page.wait_for_selector("#tab-forecast.active")
+        await page.click("#import-json")
+        page.once("dialog", accept_dialog)
+        await page.locator("input[accept='application/json,.json']").set_input_files({
+            "name": "bad-boundaries.json",
+            "mimeType": "application/json",
+            "buffer": json.dumps(payload).encode(),
+        })
+        toast = page.locator("#toast")
+        await page.wait_for_selector("#toast.show")
+        assert "error" in (await toast.get_attribute("class") or "")
+        assert "within 2026" in await toast.text_content()
+
+        result = await page.evaluate(
+            """async () => {
+                const config = await PTOStore.getConfig();
+                const vacations = await PTOStore.listVacations();
+                return {
+                    boundaries: config.pto_year_boundaries,
+                    vacationCount: vacations.length,
+                    firstVacation: vacations[0].name
+                };
+            }"""
+        )
+        assert result["boundaries"] == [{"year": 2025, "final_date": "2025-12-31"}]
+        assert result["vacationCount"] == 1
+        assert result["firstVacation"] == "Kept trip"
+    finally:
+        await context.close()
+
+
 async def main():
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
@@ -594,6 +669,7 @@ async def main():
             test_legacy_browser_backup_migrates_leave_type,
             test_notes_and_json_backup,
             test_vacation_calendar_export_and_import_preview,
+            test_import_rejects_invalid_pto_year_boundaries,
             test_settings_stay_local,
             test_accessibility_semantics_and_keyboard_controls,
             test_theme_controls_meet_contrast,
