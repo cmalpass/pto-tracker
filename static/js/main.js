@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-21';
+} from './modules/state.js?v=20260813-22';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-21';
+} from './modules/dom.js?v=20260813-22';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,25 +30,25 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-21';
+} from './modules/rendering.js?v=20260813-22';
 import {
     dismissNotification,
     generateNotifications,
     pruneDismissedFingerprints,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-21';
+} from './modules/notifications.js?v=20260813-22';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-21';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-21';
-import { configWarnings } from './modules/settings.js?v=20260813-21';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-21';
+} from './modules/calendar.js?v=20260813-22';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-22';
+import { configWarnings } from './modules/settings.js?v=20260813-22';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-22';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-21';
+} from './modules/forecast.js?v=20260813-22';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -1227,7 +1227,11 @@ async function openSettings() {
         document.getElementById('hours-per-day').value = config.pto_hours_per_day || 8;
         document.getElementById('settings-pay-periods').value = config.pay_periods_per_year || 26;
         document.getElementById('accrual-method').value = config.accrual_method || DEFAULT_CONFIG.accrual_method;
-        document.getElementById('carryover-limit').value = config.pto_carryover_limit || 40;
+        const carryoverRaw = config.pto_carryover_limit;
+        const carryover = (carryoverRaw === undefined || carryoverRaw === null || carryoverRaw === '')
+            ? 40
+            : Number(carryoverRaw);
+        document.getElementById('carryover-limit').value = Number.isFinite(carryover) && carryover >= 0 ? carryover : 40;
         document.getElementById('accrual-start').value = config.accrual_start_date || getTodayIsoDate();
         renderPtoYearBoundaries(config.pto_year_boundaries || []);
         document.getElementById('forecast-baseline-enabled').checked = config.forecast_baseline_enabled === true;
