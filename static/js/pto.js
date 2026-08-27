@@ -915,10 +915,11 @@
         return Math.ceil((((target - yearStart) / DAY_MS) + 1) / 7);
     }
 
-    function calculateWeekImpact(weekStart, weekEnd, holidayMap, booked, requiresPto, year) {
+    function calculateWeekImpact(weekStart, weekEnd, holidayMap, booked, requiresPto,
+                                 windowStart, windowEnd) {
         const holidays = new Set(Object.keys(holidayMap));
         const candidates = dateRange(weekStart, weekEnd).filter(day =>
-            day.getUTCFullYear() === year && isBusinessDay(day)
+            day >= windowStart && day <= windowEnd && isBusinessDay(day)
             && !booked.has(formatDate(day))
             && (requiresPto || !holidays.has(formatDate(day))));
         const best = {};
@@ -927,7 +928,7 @@
             for (const selected of combinations(candidates, needed, 0, [], [])) {
                 const selectedSet = new Set(selected.map(formatDate));
                 const total = continuousDaysOffCount(
-                    selectedSet, holidays, dateOf(year, 1, 1), dateOf(year, 12, 31),
+                    selectedSet, holidays, windowStart, windowEnd,
                     requiresPto);
                 const score = total / needed;
                 if (score > result.score) {
@@ -981,7 +982,7 @@
                 start_date: formatDate(current),
                 end_date: formatDate(weekEnd),
                 ...calculateWeekImpact(current, weekEnd, holidayMap, booked,
-                    normalized.pto_holidays_require_pto, year)
+                    normalized.pto_holidays_require_pto, yearStart, yearEnd)
             });
         }
         const scores = weeks.map(week => week.score);
@@ -993,13 +994,13 @@
         };
     }
 
-    function suggestionMetrics(start, end, holidays, requiresPto) {
+    function suggestionMetrics(start, end, holidays, requiresPto, windowStart, windowEnd) {
         const allDates = dateRange(start, end);
         const ptoDates = allDates.filter(day => isBusinessDay(day)
             && (requiresPto || !holidays.has(formatDate(day)))).map(formatDate);
         const interval = continuousDaysOffInterval(
             new Set(allDates.map(formatDate)), holidays,
-            dateOf(start.getUTCFullYear(), 1, 1), dateOf(start.getUTCFullYear(), 12, 31),
+            windowStart, windowEnd,
             requiresPto);
         const expanded = interval ? dateRange(interval[0], interval[1]) : allDates;
         const ptoSet = new Set(ptoDates);
@@ -1054,8 +1055,8 @@
         const normalized = normalizedConfig(config);
         const today = parseCanonicalDate(
             options && options.today ? options.today : getLocalToday(normalized));
-        const yearStart = dateOf(year, 1, 1);
-        const yearEnd = dateOf(year, 12, 31);
+        const yearStart = parseCanonicalDate(ptoYearStart(year, normalized));
+        const yearEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
         const earliest = today > yearStart ? today : yearStart;
         const isHours = normalized.pto_accrual_type === 'hours';
         const endBalance = calculateBalanceOnDate(formatDate(yearEnd), normalized, vacations);
@@ -1077,7 +1078,13 @@
                 ? parseCanonicalDate(row.end_date) : yearEnd;
             dateRange(start, end).forEach(day => reserved.add(formatDate(day)));
         }
-        const holidayMap = getHolidays(year, normalized);
+        // The PTO-year window can span two calendar years, so fetch a
+        // one-year margin on each side (mirrors generateHeatmap); out-of-window
+        // holidays are filtered by validPtoDay and the earliest/yearEnd clamps.
+        const holidayMap = {};
+        for (const holidayYear of [year - 1, year, year + 1]) {
+            Object.assign(holidayMap, getHolidays(holidayYear, normalized));
+        }
         const holidays = new Set(Object.keys(holidayMap));
         const candidates = [];
         const seen = new Set();
@@ -1098,7 +1105,8 @@
             if (seen.has(key)) return;
             seen.add(key);
             const metrics = suggestionMetrics(
-                start, end, holidays, normalized.pto_holidays_require_pto);
+                start, end, holidays, normalized.pto_holidays_require_pto,
+                yearStart, yearEnd);
             if (!metrics.pto_days) return;
             candidates.push({
                 name,
@@ -1182,7 +1190,8 @@
                 const key = `${formatDate(altStart)}:${formatDate(altEnd)}`;
                 if (altStart > altEnd || selectedKeys.has(key) || altStart < earliest) continue;
                 const metrics = suggestionMetrics(
-                    altStart, altEnd, holidays, normalized.pto_holidays_require_pto);
+                    altStart, altEnd, holidays, normalized.pto_holidays_require_pto,
+                    yearStart, yearEnd);
                 if (!metrics.pto_days) continue;
                 alternatives.push({
                     name: 'Nearby alternative',

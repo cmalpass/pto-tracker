@@ -972,3 +972,46 @@ test('forfeiture alert dates the loss from the PTO year end, not a fixed Jan 1',
         `expected 2027-07-01 in: ${customForfeit.message}`
     );
 });
+
+test('suggestion engine and heatmap honor custom PTO-year boundaries', () => {
+    // PTO year 2026 runs 2025-07-01 through 2026-06-30 (validation-valid:
+    // each final_date sits inside its own calendar year).
+    const fiscalConfig = {
+        ...config,
+        pto_year_boundaries: [
+            { year: 2025, final_date: '2025-06-30' },
+            { year: 2026, final_date: '2026-06-30' }
+        ]
+    };
+    assert.equal(PTO.getPtoYearForDate('2026-01-15', fiscalConfig), 2026);
+
+    const result = PTO.generateVacationSuggestions(
+        2026, fiscalConfig, [], { today: '2025-10-01' });
+    assert.ok(result.suggestions.length > 0, 'suggestions expected');
+    for (const item of result.suggestions) {
+        assert.ok(
+            item.start_date >= '2025-10-01' && item.end_date <= '2026-06-30',
+            `suggestion ${item.start_date}..${item.end_date} escapes the PTO year`
+        );
+    }
+    // The affordability math must use the PTO year end (2026-06-30), not Dec 31.
+    const yearEndBalance = PTO.calculateBalanceOnDate('2026-06-30', fiscalConfig, []);
+    const expectedRemaining = Math.round(
+        (yearEndBalance.accrued - yearEndBalance.used) * 100) / 100;
+    assert.equal(result.remaining_balance, expectedRemaining);
+    assert.ok(expectedRemaining < 20, 'sanity: mid-year balance should be well under a full year');
+    // Thanksgiving 2025 (Thu 2025-11-27) sits inside the PTO year, in a
+    // calendar year the engine used to ignore entirely.
+    assert.ok(
+        result.suggestions.some(item => item.holiday_date === '2025-11-27'),
+        'Thanksgiving 2025 bridge expected inside the PTO year'
+    );
+
+    // Heatmap: weeks in the PTO year's early part (calendar 2025) must be
+    // scorable; the calendar-year filter used to zero them out.
+    const heatmap = PTO.generateHeatmap(2026, fiscalConfig, []);
+    const earlyWeek = heatmap.weeks.find(week => week.start_date === '2025-11-24');
+    assert.ok(earlyWeek, 'week of 2025-11-24 expected');
+    assert.ok(earlyWeek.pto_days_needed > 0, 'early PTO-year week should have PTO candidates');
+    assert.ok(earlyWeek.score > 0, 'early PTO-year week should score');
+});
