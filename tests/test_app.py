@@ -106,6 +106,65 @@ async def test_year_selectors_track_the_current_pto_year(browser):
         await context.close()
 
 
+async def test_forecast_spans_fiscal_pto_year(browser):
+    """The yearly forecast covers the PTO year's real month range (a
+    July-June fiscal year starts in July), and the dashboard Accrued YTD
+    stat follows the current PTO-year month instead of the calendar month."""
+    context, page = await new_page(browser)
+    try:
+        await page.clock.install()
+        await page.clock.set_fixed_time(datetime(2027, 11, 15, 12, 0, 0))
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        await page.evaluate(
+            """async () => {
+                const base = await PTOStore.getConfig();
+                await PTOStore.putConfig({
+                    ...base,
+                    pto_year_boundaries: [
+                        { year: 2027, final_date: '2027-06-30' },
+                        { year: 2028, final_date: '2028-06-30' }
+                    ]
+                });
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        # 2027-11-15 falls inside PTO year 2028, which spans 2027-07-01..2028-06-30.
+        expected = await page.evaluate(
+            """async () => {
+                const config = await PTOStore.getConfig();
+                const vacations = await PTOStore.listVacations();
+                const today = PTO.getLocalToday(config);
+                const year = PTO.getPtoYearForDate(today, config);
+                const rows = PTO.generateYearlyForecast(year, config, vacations);
+                const ytd = rows.find(row => row.month === today.slice(0, 7))
+                    || rows[rows.length - 1];
+                return {
+                    year,
+                    rowCount: rows.length,
+                    firstMonth: rows[0].month_name,
+                    lastMonth: rows[rows.length - 1].month_name,
+                    ytd: ytd.accrued
+                };
+            }"""
+        )
+        assert expected["year"] == 2028
+        assert expected["rowCount"] == 12
+        assert expected["firstMonth"] == "July"
+        assert expected["lastMonth"] == "June"
+        await page.click("#tab-forecast-tab")
+        await page.wait_for_selector(".forecast-table tbody tr")
+        rows = await page.locator(".forecast-table tbody tr").all()
+        assert len(rows) == 12
+        assert (await rows[0].inner_text()).startswith("July")
+        assert (await rows[11].inner_text()).startswith("June")
+        ytd_stat = await page.locator("#stat-accrued-ytd").inner_text()
+        assert ytd_stat == f"{expected['ytd']:.1f}"
+    finally:
+        await context.close()
+
+
 async def test_smart_notifications_generate_and_link_to_actions(browser):
     context, page = await new_page(browser)
     try:
@@ -791,6 +850,7 @@ async def main():
         tests = [
             test_dashboard_and_forecast,
             test_year_selectors_track_the_current_pto_year,
+            test_forecast_spans_fiscal_pto_year,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,

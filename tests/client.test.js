@@ -239,6 +239,36 @@ test('keeps hours-mode usage and forecast values in hours', () => {
     assert.ok(Math.abs(august.balance - (august.accrued - 8)) < 0.01);
 });
 
+test('spans fiscal PTO years across their real month range', () => {
+    const fiscalConfig = {
+        ...config,
+        pto_year_boundaries: [
+            { year: 2025, final_date: '2025-06-30' },
+            { year: 2026, final_date: '2026-06-30' }
+        ]
+    };
+    const forecast = PTO.generateYearlyForecast(2026, fiscalConfig, []);
+    assert.equal(forecast.length, 12);
+    assert.equal(forecast[0].month, '2025-07');
+    assert.equal(forecast[0].month_name, 'July');
+    assert.equal(forecast[11].month, '2026-06');
+    assert.equal(forecast[11].month_name, 'June');
+    assert.equal(forecast[11].accrued,
+        PTO.calculateBalanceOnDate('2026-06-30', fiscalConfig, []).accrued);
+    const multiYear = PTO.generateMultiYearForecast(2026, 2, fiscalConfig, []);
+    assert.equal(multiYear[0].year_end_balance, forecast[11].balance);
+    assert.equal(multiYear[0].limit, forecast[11].limit);
+});
+
+test('keeps calendar-year forecasts unchanged for the default config', () => {
+    const forecast = PTO.generateYearlyForecast(2026, config, []);
+    assert.equal(forecast.length, 12);
+    assert.deepEqual(forecast.map(row => row.month),
+        Array.from({ length: 12 }, (_, index) => `2026-${String(index + 1).padStart(2, '0')}`));
+    assert.equal(forecast[0].month_name, 'January');
+    assert.equal(forecast[11].month_name, 'December');
+});
+
 test('uses the hours-mode carryover limit without converting it twice', () => {
     const hoursConfig = {
         ...config,
