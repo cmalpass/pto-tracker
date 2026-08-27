@@ -20,6 +20,9 @@
     ]);
     const LEAVE_TYPES = Object.freeze(['vacation', 'sick', 'personal', 'holiday']);
     let databasePromise;
+    let activeDb = null;
+    let storageStatus = Object.freeze({ state: 'connecting', reason: null });
+    const statusListeners = new Set();
 
     function clone(value) {
         return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -56,6 +59,41 @@
 
     function isQuarterHour(value) {
         return Math.abs((value * 4) - Math.round(value * 4)) < 1e-9;
+    }
+
+    function setStorageStatus(state, reason = null) {
+        if (storageStatus.state === state && storageStatus.reason === reason) {
+            return;
+        }
+        storageStatus = Object.freeze({ state, reason });
+        if (state === 'error' || state === 'blocked') {
+            console.warn('PTO Tracker storage degraded', { state, reason });
+        }
+        for (const listener of [...statusListeners]) {
+            try {
+                listener(storageStatus);
+            } catch (error) {
+                console.warn('PTO Tracker storage status listener failed', error);
+            }
+        }
+    }
+
+    function getStorageStatus() {
+        return storageStatus;
+    }
+
+    function onStorageStatusChange(listener) {
+        statusListeners.add(listener);
+        listener(storageStatus);
+        return () => statusListeners.delete(listener);
+    }
+
+    // Test hook: clear the cached connection so the next call re-opens.
+    // Needed because Node test suites share one module instance.
+    function resetStorageConnection() {
+        databasePromise = undefined;
+        activeDb = null;
+        storageStatus = Object.freeze({ state: 'connecting', reason: null });
     }
 
     function assertVacationAmount(record, config) {
@@ -187,6 +225,7 @@
             return databasePromise;
         }
         if (typeof indexedDB === 'undefined') {
+            setStorageStatus('no_indexeddb', 'IndexedDB is not available in this browser');
             return Promise.resolve(null);
         }
         databasePromise = new Promise((resolve) => {
@@ -194,6 +233,7 @@
             try {
                 request = indexedDB.open(DB_NAME, DB_VERSION);
             } catch (_) {
+                setStorageStatus('error', 'IndexedDB open threw synchronously');
                 resolve(null);
                 return;
             }
@@ -225,13 +265,48 @@
             };
             request.onsuccess = () => {
                 const db = request.result;
-                db.onversionchange = () => db.close();
-                resolve(db);
+                db.onversionchange = () => {
+                    // Another connection wants a newer schema version. Drop
+                    // this connection and re-open so we either upgrade in
+                    // place or stay degraded until the other tab closes.
+                    activeDb = null;
+                    db.close();
+                    databasePromise = undefined;
+                    setStorageStatus('blocked', 'another tab requested a database upgrade');
+                    databasePromise = openDatabase();
+                };
+                (async () => {
+                    await reconcileFallbackIntoDatabase(db);
+                    activeDb = db;
+                    setStorageStatus('ok');
+                    resolve(db);
+                })();
             };
-            request.onerror = () => resolve(null);
-            request.onblocked = () => resolve(null);
+            request.onerror = () => {
+                setStorageStatus('error', request.error?.message || 'IndexedDB open failed');
+                resolve(null);
+            };
+            request.onblocked = () => {
+                // Another connection holds the database. Degrade to fallback
+                // storage immediately so the app never hangs, but keep the
+                // open request alive: once the other connection closes,
+                // onsuccess fires above and we reconnect without a reload.
+                setStorageStatus('blocked', 'another tab is holding PTO storage');
+                resolve(null);
+            };
         });
         return databasePromise;
+    }
+
+    async function currentDatabase() {
+        if (activeDb) {
+            return activeDb;
+        }
+        const db = await openDatabase();
+        if (activeDb) {
+            return activeDb;
+        }
+        return db && db.open ? db : null;
     }
 
     function fallbackStorage() {
@@ -285,6 +360,51 @@
         fallbackStorage().setItem(FALLBACK_KEY, JSON.stringify(data));
     }
 
+    // Merge fallback (localStorage) records into IndexedDB on a successful
+    // connection, then re-sync the fallback from the merged database so the
+    // next degraded window starts from merged state. On the same id the DB
+    // record wins (conservative union - without timestamps there is no way
+    // to know which copy is newer).
+    async function reconcileFallbackIntoDatabase(db) {
+        try {
+            const data = readFallback();
+            const idStores = ['vacations', 'notes', 'history'];
+            const hasFallbackData = idStores.some(name => data[name].length) || data.config.length > 0;
+            if (!hasFallbackData) {
+                return;
+            }
+            for (const storeName of idStores) {
+                if (!data[storeName].length) continue;
+                const existingKeys = await idbRequest(db, storeName, 'readonly', store => store.getAllKeys());
+                const missing = data[storeName].filter(record => !existingKeys.includes(record.id));
+                for (const record of missing) {
+                    await idbRequest(db, storeName, 'readwrite', store => store.put(record));
+                }
+            }
+            if (data.config.length) {
+                const existingConfig = await idbRequest(db, 'config', 'readonly', store => store.get('config'));
+                if (!existingConfig) {
+                    await idbRequest(db, 'config', 'readwrite', store => store.put(data.config[0]));
+                }
+            }
+            // Re-sync the fallback from the merged database.
+            const merged = {
+                config: await idbRequest(db, 'config', 'readonly', store => store.getAll()),
+                vacations: await idbRequest(db, 'vacations', 'readonly', store => store.getAll()),
+                notes: await idbRequest(db, 'notes', 'readonly', store => store.getAll()),
+                history: await idbRequest(db, 'history', 'readonly', store => store.getAll()),
+                nextId: {}
+            };
+            for (const storeName of idStores) {
+                const maxId = merged[storeName].reduce((max, record) => Math.max(max, Number(record.id) || 0), 0);
+                merged.nextId[storeName] = Math.max(maxId + 1, data.nextId[storeName] || 1);
+            }
+            writeFallback(merged);
+        } catch (error) {
+            console.warn('PTO Tracker: could not reconcile browser fallback storage', error);
+        }
+    }
+
     function idbRequest(db, storeName, mode, operation) {
         return new Promise((resolve, reject) => {
             let transaction;
@@ -309,7 +429,7 @@
 
     async function getRaw(storeName, id) {
         assertStore(storeName);
-        const db = await openDatabase();
+        const db = await currentDatabase();
         if (db) {
             const record = await idbRequest(db, storeName, 'readonly', store => store.get(id));
             return normalizeRecord(storeName, record);
@@ -325,7 +445,7 @@
 
     async function list(storeName, options = {}) {
         assertStore(storeName);
-        const db = await openDatabase();
+        const db = await currentDatabase();
         let records;
         if (db) {
             records = await idbRequest(db, storeName, 'readonly', store => store.getAll());
@@ -352,7 +472,7 @@
             record.created_at = new Date().toISOString();
         }
         const normalized = normalizeRecord(storeName, record);
-        const db = await openDatabase();
+        const db = await currentDatabase();
         if (db) {
             const id = await idbRequest(db, storeName, 'readwrite', store => store.put(normalized));
             return getRaw(storeName, id);
@@ -427,7 +547,7 @@
 
     async function clear(storeName) {
         assertStore(storeName);
-        const db = await openDatabase();
+        const db = await currentDatabase();
         if (db) {
             await idbRequest(db, storeName, 'readwrite', store => store.clear());
             return;
@@ -492,7 +612,7 @@
             for (const record of incoming.vacations) await put('vacations', record);
             for (const record of incoming.notes) await put('notes', record);
         } else {
-            const db = await openDatabase();
+            const db = await currentDatabase();
             if (db) {
                 await new Promise((resolve, reject) => {
                     const transaction = db.transaction(DATA_STORES, 'readwrite');
@@ -573,6 +693,9 @@
         listHistory: () => list('history', { includeDeleted: true }),
         exportJSON,
         importJSON,
-        requestPersistentStorage
+        requestPersistentStorage,
+        getStorageStatus,
+        onStorageStatusChange,
+        resetStorageConnection
     });
 }));

@@ -133,6 +133,7 @@ export function startApplication() {
     try {
         setupThemeToggle();
         setupTabs();
+        setupStorageStatusBanner();
         setupNotifications();
         setupSettings();
         setupVacationModal();
@@ -149,6 +150,39 @@ export function startApplication() {
         reportError('Failed to start PTO Tracker', err, 'Unable to start PTO Tracker');
     }
     });
+}
+
+function setupStorageStatusBanner() {
+    const banner = document.getElementById('storage-degraded-banner');
+    if (!banner || typeof PTOStore?.onStorageStatusChange !== 'function') return;
+    let previousState = PTOStore.getStorageStatus().state;
+    PTOStore.onStorageStatusChange(status => {
+        banner.classList.remove('danger');
+        let message = '';
+        if (status.state === 'blocked') {
+            message = 'Storage is in degraded mode: another tab may be holding your PTO data. Close the other tabs and reload to avoid losing changes.';
+        } else if (status.state === 'error') {
+            message = `Storage is in degraded mode (IndexedDB error${status.reason ? `: ${status.reason}` : ''}). Changes are kept in browser fallback storage; export a backup to be safe.`;
+            banner.classList.add('danger');
+        } else if (status.state === 'no_indexeddb') {
+            message = 'IndexedDB is not available, so your PTO data is stored in browser fallback storage. Export backups regularly.';
+        }
+        banner.textContent = message;
+        banner.hidden = message === '';
+        if (previousState === 'blocked' && status.state === 'ok') {
+            refreshCurrentView();
+        }
+        previousState = status.state;
+    });
+}
+
+function refreshCurrentView() {
+    const activeTab = document.querySelector('.nav-tab.active')?.dataset.tab;
+    if (activeTab === 'calendar') renderCalendar();
+    else if (activeTab === 'heatmap') loadHeatmap();
+    else if (activeTab === 'forecast') loadForecast();
+    else if (activeTab === 'vacations') loadVacations();
+    else loadDashboard();
 }
 
 function setupTabs() {
