@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const PTO = require('../static/js/pto.js');
 const PTOStore = require('../static/js/store.js');
 const PTOTransfer = require('../static/js/transfer.js');
+const PTOYearSelects = require('../static/js/year-selects.js');
 
 // Mirror the browser global environment so store.js can resolve shared PTO helpers.
 globalThis.PTO = PTO;
@@ -784,4 +785,93 @@ test('reports missing IndexedDB and supports status subscriptions', async () => 
        delete globalThis.indexedDB;
        PTOStore.resetStorageConnection();
    }
+});
+
+// --- Year select helpers (static/js/year-selects.js) ---
+// Minimal DOM stub so populateYearSelect can create <option> nodes.
+if (typeof globalThis.document === 'undefined') {
+    globalThis.document = {
+        createElement: tag => {
+            if (tag !== 'option') throw new Error('unexpected element: ' + tag);
+            return { tagName: 'OPTION', value: '', textContent: '', selected: false };
+        }
+    };
+}
+
+function makeFakeSelect(initialValues = []) {
+    let options = initialValues.map(value => ({
+        value: String(value),
+        textContent: String(value),
+        selected: false
+    }));
+    if (options.length) options[0].selected = true;
+    const select = {
+        appendChild(option) {
+            options.push(option);
+        }
+    };
+    Object.defineProperty(select, 'options', { get: () => options });
+    Object.defineProperty(select, 'innerHTML', {
+        get: () => '',
+        set: () => {
+            options = [];
+        }
+    });
+    Object.defineProperty(select, 'value', {
+        get() {
+            const selected = options.find(option => option.selected);
+            return selected ? selected.value : (options.length ? options[0].value : '');
+        },
+        set(next) {
+            options.forEach(option => {
+                option.selected = option.value === next;
+            });
+        }
+    });
+    return select;
+}
+
+test('yearOptionsFor spans one year before through three years after the center', () => {
+    assert.deepEqual(PTOYearSelects.yearOptionsFor(2029), [2028, 2029, 2030, 2031, 2032]);
+});
+
+test('yearOptionsFor rejects a non-integer center year', () => {
+    assert.throws(() => PTOYearSelects.yearOptionsFor(2029.5), TypeError);
+    assert.throws(() => PTOYearSelects.yearOptionsFor('not-a-year'), TypeError);
+});
+
+test('populateYearSelect replaces stale hardcoded options and selects the current year', () => {
+    const select = makeFakeSelect(['2026', '2027']);
+    PTOYearSelects.populateYearSelect(select, 2029);
+    assert.deepEqual(select.options.map(o => o.value), ['2028', '2029', '2030', '2031', '2032']);
+    assert.equal(select.value, '2029');
+    assert.equal(select.options.find(o => o.selected).value, '2029');
+});
+
+test('populateYearSelect preserves the user selection when the range is already covered', () => {
+    const select = makeFakeSelect(['2028', '2029', '2030', '2031', '2032']);
+    select.value = '2031';
+    PTOYearSelects.populateYearSelect(select, 2029);
+    assert.deepEqual(select.options.map(o => o.value), ['2028', '2029', '2030', '2031', '2032']);
+    assert.equal(select.value, '2031');
+});
+
+test('populateYearSelect rebuilds when the centered range is no longer covered', () => {
+    const select = makeFakeSelect(['2028', '2029', '2030', '2031', '2032']);
+    select.value = '2028';
+    PTOYearSelects.populateYearSelect(select, 2030);
+    assert.deepEqual(select.options.map(o => o.value), ['2029', '2030', '2031', '2032', '2033']);
+    assert.equal(select.value, '2030');
+    assert.equal(select.options.find(o => o.selected).value, '2030');
+});
+
+test('populateYearSelect fills an empty select with the centered year selected', () => {
+    const select = makeFakeSelect();
+    PTOYearSelects.populateYearSelect(select, 2029);
+    assert.deepEqual(select.options.map(o => o.value), ['2028', '2029', '2030', '2031', '2032']);
+    assert.equal(select.value, '2029');
+});
+
+test('populateYearSelect is a no-op for a missing select', () => {
+    assert.doesNotThrow(() => PTOYearSelects.populateYearSelect(null, 2029));
 });

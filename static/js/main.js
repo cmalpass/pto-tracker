@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-14';
+} from './modules/state.js?v=20260813-15';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-14';
+} from './modules/dom.js?v=20260813-15';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,24 +30,24 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-14';
+} from './modules/rendering.js?v=20260813-15';
 import {
     dismissNotification,
     generateNotifications,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-14';
+} from './modules/notifications.js?v=20260813-15';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-14';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-14';
-import { configWarnings } from './modules/settings.js?v=20260813-14';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-14';
+} from './modules/calendar.js?v=20260813-15';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-15';
+import { configWarnings } from './modules/settings.js?v=20260813-15';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-15';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-14';
+} from './modules/forecast.js?v=20260813-15';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -1309,6 +1309,12 @@ async function applyPolicy() {
 async function loadForecast() {
     announce(`Loading ${state.currentYear} forecast.`);
     const yearSelect = document.getElementById('forecast-year');
+    // The select's HTML options are static, so rebuild them around the year
+    // about to be rendered and mirror that year into the select.
+    globalThis.PTOYearSelects.populateYearSelect(yearSelect, state.currentYear);
+    if (yearSelect) {
+        yearSelect.value = String(state.currentYear);
+    }
     if (yearSelect && !yearSelect.dataset.listenerAttached) {
         yearSelect.dataset.listenerAttached = 'true';
         yearSelect.addEventListener('change', async (e) => {
@@ -1341,6 +1347,7 @@ async function loadMultiYearForecast() {
     const startSelect = document.getElementById('multi-year-start');
     const countSelect = document.getElementById('multi-year-count');
     if (!startSelect || !countSelect) return;
+    globalThis.PTOYearSelects.populateYearSelect(startSelect, state.config?.current_year ?? state.currentYear);
     if (!startSelect.dataset.listenerAttached) {
         startSelect.dataset.listenerAttached = 'true';
         startSelect.addEventListener('change', loadMultiYearForecast);
@@ -1404,6 +1411,7 @@ function renderMultiYearChart(years) {
 async function loadHeatmap() {
     const select = document.getElementById('heatmap-year');
     if (!select) return;
+    globalThis.PTOYearSelects.populateYearSelect(select, state.config?.current_year ?? state.currentYear);
     if (!select.dataset.listenerAttached) {
         select.dataset.listenerAttached = 'true';
         select.addEventListener('change', loadHeatmap);
