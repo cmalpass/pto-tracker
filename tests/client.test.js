@@ -259,6 +259,51 @@ test('uses the hours-mode carryover limit without converting it twice', () => {
     assert.equal(suggestions.forfeit_risk > 0, true);
 });
 
+test('keeps analyzeVacation balance_after consistent with the clamped dashboard balance', () => {
+    const testConfig = {
+        ...config,
+        accrual_method: 'full',
+        pto_uses_rollover: false,
+        pto_lose_above_limit: false
+    };
+    const existing = {
+        id: 1,
+        name: 'January',
+        start_date: '2026-01-02',
+        end_date: '2026-01-02',
+        days: 1,
+        hours: 0
+    };
+    // Early in the year, usage (1 day) already exceeds accrual (~0.28 days),
+    // so the raw available amount is negative while the dashboard clamps to 0.
+    const dashboard = PTO.calculateBalanceOnDate('2026-01-05', testConfig, [existing]);
+    assert.equal(dashboard.balance, 0);
+
+    const noCharge = PTO.analyzeVacation(
+        '2026-01-05', '2026-01-05', 0, 0, testConfig, [existing]);
+    assert.equal(noCharge.balance_after, dashboard.balance);
+
+    const booking = PTO.analyzeVacation(
+        '2026-01-05', '2026-01-05', 1, 0, testConfig, [existing]);
+    const dashboardAfter = PTO.calculateBalanceOnDate('2026-01-05', testConfig, [
+        existing, {
+            id: 2,
+            name: 'New',
+            start_date: '2026-01-05',
+            end_date: '2026-01-05',
+            days: 1,
+            hours: 0
+        }
+    ]);
+    assert.equal(booking.balance_after, dashboardAfter.balance);
+
+    const warning = booking.warnings.find(item => item.type === 'negative_balance');
+    assert.ok(warning, 'negative_balance warning expected when raw balance is negative');
+    assert.equal(warning.severity, 'error');
+    const rawAfter = Number(warning.message.match(/Balance will be (-?\d+\.\d{2})/)[1]);
+    assert.ok(rawAfter < 0, `warning should carry the raw deficit, got ${rawAfter}`);
+});
+
 test('starts forecasts from an entered baseline and ignores prior history', () => {
     const baselineConfig = {
         ...config,

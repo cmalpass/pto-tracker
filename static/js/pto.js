@@ -640,6 +640,12 @@
         });
     }
 
+    // Canonical "available balance" definition: the balance is clamped at 0 for
+    // each PTO year (Math.max below), so the dashboard and forecasts never show
+    // a negative balance. Callers that need the raw, unclamped available amount
+    // (e.g. analyzeVacation's negative-balance warning) must compute
+    // `accrued - used` themselves and clamp any returned "balance" to >= 0 so it
+    // stays consistent with this function.
     function calculateBalanceOnDate(targetDate, config, vacations) {
         const normalized = normalizedConfig(config);
         const target = parseCanonicalDate(targetDate);
@@ -815,9 +821,12 @@
         const overlaps = overlappingVacations(startDate, endDate, vacations, vacationId);
         const withoutEdited = (vacations || []).filter(item => item.id !== vacationId);
         const projected = calculateBalanceOnDate(endDate, normalized, withoutEdited);
-        const current = projected.accrued - projected.used;
         const requested = bookingAmount(requestedDays, requestedHours, normalized);
-        const balanceAfter = current - requested;
+        // Raw (unclamped) available amount keeps the negative signal for the
+        // warning; balance_after follows the canonical clamped definition so
+        // it matches what the dashboard shows after the booking.
+        const rawAfter = projected.accrued - projected.used - requested;
+        const balanceAfter = Math.max(0, rawAfter);
         const yearEnd = ptoYearEnd(getPtoYearForDate(end, normalized), normalized);
         const endBalance = calculateBalanceOnDate(yearEnd, normalized, withoutEdited);
         const baselineForfeit = forfeitAmount(Math.max(0, endBalance.accrued - endBalance.used), normalized);
@@ -832,10 +841,10 @@
                 severity: 'warning'
             });
         }
-        if (balanceAfter < -1e-9) {
+        if (rawAfter < -1e-9) {
             warnings.push({
                 type: 'negative_balance',
-                message: `Balance will be ${balanceAfter.toFixed(2)} ${unit} after this vacation.`,
+                message: `Balance will be ${rawAfter.toFixed(2)} ${unit} after this vacation.`,
                 severity: 'error'
             });
         }
