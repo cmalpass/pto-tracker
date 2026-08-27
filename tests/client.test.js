@@ -910,3 +910,33 @@ test('offers no suggestions when the year-end balance is below one whole day', (
     const used = partialDay.suggestions.reduce((sum, item) => sum + item.pto_days, 0);
     assert.equal(used, 1);
 });
+
+test('continuous days off stops at uncovered holidays when they require PTO', () => {
+    // Fri 2026-01-16 is the last business day before MLK Day (Mon 2026-01-19).
+    // When holidays require PTO and MLK is not booked, it is a working day, so
+    // the longest continuous stretch is only Fri-Sun (3 days); without the rule
+    // the holiday extends the stretch to 4 days.
+    const flagOn = PTO.generateVacationSuggestions(
+        2026, { ...config, pto_holidays_require_pto: true }, [], { today: '2026-01-01' });
+    const onWeekend = flagOn.suggestions.find(item =>
+        item.start_date === '2026-01-16' && item.end_date === '2026-01-16');
+    assert.ok(onWeekend, 'Jan 16 long weekend suggestion should be selected');
+    assert.equal(onWeekend.total_days_off, 3);
+    assert.equal(onWeekend.impact_score, 3);
+    const onWeek = PTO.generateHeatmap(
+        2026, { ...config, pto_holidays_require_pto: true }, [])
+        .weeks.find(week => week.start_date === '2026-01-12');
+    assert.equal(onWeek.total_days_off, 3);
+
+    const flagOff = PTO.generateVacationSuggestions(
+        2026, { ...config, pto_holidays_require_pto: false }, [], { today: '2026-01-01' });
+    const offBridge = flagOff.suggestions.find(item =>
+        item.start_date === '2026-01-16' && item.end_date === '2026-01-19');
+    assert.ok(offBridge, 'MLK holiday-bridge suggestion should be selected');
+    assert.equal(offBridge.total_days_off, 4);
+    assert.equal(offBridge.impact_score, 4);
+    const offWeek = PTO.generateHeatmap(
+        2026, { ...config, pto_holidays_require_pto: false }, [])
+        .weeks.find(week => week.start_date === '2026-01-12');
+    assert.equal(offWeek.total_days_off, 4);
+});
