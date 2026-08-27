@@ -36,7 +36,7 @@ function normalizedToday(pto, config, today) {
     return pto.getLocalToday(config);
 }
 
-function createForfeitureAlert({ pto, config, vacations, today, year, balance, unit }) {
+function createForfeitureAlert({ config, vacations, today, year, balance, unit, yearEnd }) {
     const available = Math.max(0, balance.accrued - balance.used);
     const limit = Number(config.pto_carryover_limit || 0);
     const forfeited = !config.pto_uses_rollover
@@ -46,11 +46,14 @@ function createForfeitureAlert({ pto, config, vacations, today, year, balance, u
     const policy = config.pto_uses_rollover
         ? `The ${amountLabel(limit, unit)} carryover cap is projected to be exceeded`
         : 'Your policy does not carry unused PTO into the next year';
+    // The balance is forfeited when the PTO year ends, which is not always
+    // December 31 when custom PTO-year boundaries are configured.
+    const forfeitureDate = yearEnd ? addDays(yearEnd, 1) : `${year + 1}-01-01`;
     return {
         type: 'carryover-forfeiture',
         severity: 'critical',
         title: 'Projected PTO forfeiture',
-        message: `${amountLabel(forfeited, unit)} may be forfeited on ${year + 1}-01-01. ${policy}.`,
+        message: `${amountLabel(forfeited, unit)} may be forfeited on ${forfeitureDate}. ${policy}.`,
         detail: `Based on ${today} and ${vacations.length} planned leave booking${vacations.length === 1 ? '' : 's'}.`,
         amount: forfeited,
         unit,
@@ -142,7 +145,7 @@ export function generateNotifications({ pto, config, vacations = [], today } = {
     const alerts = [
         createForfeitureAlert({
             pto, config, vacations: normalizedVacations, today: localToday,
-            year, balance, unit
+            year, balance, unit, yearEnd
         }),
         createCapAlert({ config, year, balance, unit }),
         createLowBalanceAlert({
