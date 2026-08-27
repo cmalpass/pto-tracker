@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-20';
+} from './modules/state.js?v=20260813-21';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-20';
+} from './modules/dom.js?v=20260813-21';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,25 +30,25 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-20';
+} from './modules/rendering.js?v=20260813-21';
 import {
     dismissNotification,
     generateNotifications,
     pruneDismissedFingerprints,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-20';
+} from './modules/notifications.js?v=20260813-21';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-20';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-20';
-import { configWarnings } from './modules/settings.js?v=20260813-20';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-20';
+} from './modules/calendar.js?v=20260813-21';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-21';
+import { configWarnings } from './modules/settings.js?v=20260813-21';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-21';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-20';
+} from './modules/forecast.js?v=20260813-21';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -276,8 +276,9 @@ async function loadDashboard() {
         document.getElementById('used-balance').textContent = balance.used.toFixed(1);
         document.getElementById('limit-balance').textContent = balance.limit.toFixed(1);
         const ytdForecast = stats.yearly_forecast || [];
-        const currentMonthIdx = now.getMonth();
-        const ytdAccrued = ytdForecast[currentMonthIdx]?.accrued || 0;
+        const ytdRow = ytdForecast.find(row => row.month === state.today.slice(0, 7))
+            || ytdForecast[ytdForecast.length - 1];
+        const ytdAccrued = ytdRow?.accrued || 0;
         document.getElementById('stat-accrued-ytd').textContent = ytdAccrued.toFixed(1);
         document.getElementById('stat-used-ytd').textContent = stats.current_balance?.used?.toFixed(1) || '0.0';
         document.getElementById('stat-upcoming').textContent = stats.upcoming_vacations || 0;
@@ -1400,7 +1401,7 @@ function renderMultiYearChart(years) {
     state.multiYearChart = new Chart(canvas, {
         type: 'line',
         data: {
-            labels: MONTHS.map(month => month.substring(0, 3)),
+            labels: years[0].monthly_balances.map(month => month.month_name.substring(0, 3)),
             datasets: years.map((entry, index) => ({
                 label: String(entry.year),
                 data: entry.monthly_balances.map(month => month.balance),

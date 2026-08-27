@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260813-20';
-import { clearElement, element, appendText } from './dom.js?v=20260813-20';
+import { DAYS, MONTHS, state } from './state.js?v=20260813-21';
+import { clearElement, element, appendText } from './dom.js?v=20260813-21';
 
 let emptyVacationElement;
 let emptySuggestionElement;
