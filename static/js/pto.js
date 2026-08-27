@@ -1160,7 +1160,7 @@
                 parseCanonicalDate(candidate.start_date), parseCanonicalDate(candidate.end_date))
                 .map(formatDate);
             if (dates.some(day => selectedDates.has(day))) continue;
-            if (maxDays > 0 && usedDays + candidate.pto_days > maxDays) continue;
+            if (usedDays + candidate.pto_days > maxDays) continue;
             selected.push(candidate);
             dates.forEach(day => selectedDates.add(day));
             usedDays += candidate.pto_days;
@@ -1209,10 +1209,19 @@
             candidate.explanation = explanation;
             delete candidate._metrics;
         });
-        let message = 'Suggestions are optimized for holiday alignment and high impact time off.';
-        if (forfeitDays > 0) {
+        let message;
+        if (remainingDays < 1) {
+            // Every candidate costs at least one whole PTO day, so a
+            // sub-day balance can never afford any suggestion.
+            message = remainingDays > 0
+                ? 'Less than one PTO day remains this PTO year, so no whole-day suggestion fits within the remaining balance.'
+                : 'No PTO balance remains this PTO year, so no suggestions can be offered.';
+            if (forfeitDays > 0) {
+                message += ' The leftover balance will be forfeited at year end.';
+            }
+        } else if (forfeitDays > 0) {
             message = 'You are on track to forfeit PTO unless you schedule additional time off.';
-        } else if (remainingDays > 0) {
+        } else {
             message = 'You still have PTO available; these options maximize time off per PTO day.';
         }
         const allSuggestions = selected;

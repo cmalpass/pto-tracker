@@ -875,3 +875,38 @@ test('populateYearSelect fills an empty select with the centered year selected',
 test('populateYearSelect is a no-op for a missing select', () => {
     assert.doesNotThrow(() => PTOYearSelects.populateYearSelect(null, 2029));
 });
+
+test('offers no suggestions when the year-end balance is below one whole day', () => {
+    const cfg = { ...config, accrual_method: 'full' };
+    const accrued = PTO.calculateBalanceOnDate('2026-12-31', cfg, []).accrued;
+    // Books a vacation whose usage leaves exactly `remaining` days at year end.
+    const vacationLeaving = remaining => {
+        const used = Math.round((accrued - remaining) * 100) / 100;
+        const days = Math.floor(used + 1e-9);
+        const hours = Math.round((used - days) * 8 * 100) / 100;
+        return {
+            id: 1, name: 'Planned', start_date: '2026-06-01',
+            end_date: '2026-06-05', days, hours
+        };
+    };
+
+    const zeroBudget = PTO.generateVacationSuggestions(
+        2026, cfg, [vacationLeaving(0.3)], { today: '2026-01-01' });
+    assert.equal(zeroBudget.remaining_balance_days_equivalent, 0.3);
+    assert.equal(zeroBudget.suggestions.length, 0);
+    assert.equal(zeroBudget.total_unfiltered, 0);
+    assert.match(zeroBudget.summary.message, /no whole-day suggestion/i);
+
+    const exactZero = PTO.generateVacationSuggestions(
+        2026, cfg, [vacationLeaving(0)], { today: '2026-01-01' });
+    assert.equal(exactZero.remaining_balance_days_equivalent, 0);
+    assert.equal(exactZero.suggestions.length, 0);
+    assert.match(exactZero.summary.message, /no PTO balance remains/i);
+
+    const partialDay = PTO.generateVacationSuggestions(
+        2026, cfg, [vacationLeaving(1.5)], { today: '2026-01-01' });
+    assert.equal(partialDay.remaining_balance_days_equivalent, 1.5);
+    assert.ok(partialDay.suggestions.length > 0);
+    const used = partialDay.suggestions.reduce((sum, item) => sum + item.pto_days, 0);
+    assert.equal(used, 1);
+});
