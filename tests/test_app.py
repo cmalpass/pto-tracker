@@ -194,6 +194,46 @@ async def test_settings_dialog_preserves_zero_carryover_limit(browser):
         await context.close()
 
 
+async def test_next_accrual_date_is_anchored_to_accrual_start(browser):
+    """The Next Accrual tile shows the next boundary of the accrual
+    schedule (accrual_start_date + k pay periods), not today + one
+    pay period."""
+    context, page = await new_page(browser)
+    try:
+        await page.clock.install()
+        await page.clock.set_fixed_time(datetime(2027, 3, 15, 12, 0, 0))
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        await page.evaluate(
+            """async () => {
+                const base = await PTOStore.getConfig();
+                await PTOStore.putConfig({
+                    ...base,
+                    accrual_start_date: '2027-01-01',
+                    pay_periods_per_year: 26
+                });
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        # Period = 365.25/26 days; today is 73 days after the start, so the
+        # next boundary is start + 6 periods (84.29 days) = Mar 26. The old
+        # "today + one period" code would show Mar 29.
+        assert await page.locator("#next-accrual-date").inner_text() == "Mar 26"
+        # A future accrual start date is itself the next accrual.
+        await page.evaluate(
+            """async () => {
+                const base = await PTOStore.getConfig();
+                await PTOStore.putConfig({...base, accrual_start_date: '2027-06-01'});
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        assert await page.locator("#next-accrual-date").inner_text() == "Jun 1"
+    finally:
+        await context.close()
+
+
 async def test_smart_notifications_generate_and_link_to_actions(browser):
     context, page = await new_page(browser)
     try:
@@ -881,6 +921,7 @@ async def main():
             test_year_selectors_track_the_current_pto_year,
             test_forecast_spans_fiscal_pto_year,
             test_settings_dialog_preserves_zero_carryover_limit,
+            test_next_accrual_date_is_anchored_to_accrual_start,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,

@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-22';
+} from './modules/state.js?v=20260813-23';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-22';
+} from './modules/dom.js?v=20260813-23';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,25 +30,25 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-22';
+} from './modules/rendering.js?v=20260813-23';
 import {
     dismissNotification,
     generateNotifications,
     pruneDismissedFingerprints,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-22';
+} from './modules/notifications.js?v=20260813-23';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-22';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-22';
-import { configWarnings } from './modules/settings.js?v=20260813-22';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-22';
+} from './modules/calendar.js?v=20260813-23';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-23';
+import { configWarnings } from './modules/settings.js?v=20260813-23';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-23';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-22';
+} from './modules/forecast.js?v=20260813-23';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -290,9 +290,17 @@ async function loadDashboard() {
         document.getElementById('pay-periods').textContent = config.pay_periods_per_year;
         const annual = (config.pto_accrual_per_pay_period * config.pay_periods_per_year);
         document.getElementById('annual-accrual').textContent = `${annual.toFixed(1)} ${config.pto_accrual_type === 'hours' ? 'hours' : 'days'}`;
-        const payPeriodDays = 365.25 / config.pay_periods_per_year;
-        const nextAccrual = new Date(now.getTime() + payPeriodDays * 86400000);
-        document.getElementById('next-accrual-date').textContent = nextAccrual.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const payPeriodDays = Number(365.25 / config.pay_periods_per_year);
+        const todayUtcMs = Date.parse(`${state.today}T00:00:00Z`);
+        const startUtcMs = Date.parse(`${config.accrual_start_date}T00:00:00Z`);
+        let nextAccrualMs = todayUtcMs + payPeriodDays * 86400000;
+        if (payPeriodDays > 0 && Number.isFinite(startUtcMs)) {
+            const periodMs = payPeriodDays * 86400000;
+            const periodIndex = startUtcMs > todayUtcMs ? 0 : Math.floor((todayUtcMs - startUtcMs) / periodMs) + 1;
+            nextAccrualMs = startUtcMs + periodIndex * periodMs;
+        }
+        const nextAccrual = new Date(nextAccrualMs);
+        document.getElementById('next-accrual-date').textContent = nextAccrual.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
         announce(`Current PTO balance loaded: ${balance.balance.toFixed(1)} ${unitLabel}.`);
         state.calendarEvents[`${now.getFullYear()}-${now.getMonth()}`] =
             expandCalendarEvents(calendarData(now.getFullYear(), now.getMonth()).events, now.getFullYear(), now.getMonth());
