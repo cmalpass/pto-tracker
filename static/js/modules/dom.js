@@ -120,12 +120,14 @@ export function showToast(message, type = '', action = null) {
 
 export function showWarningToast(warnings = []) {
     const warning = warnings.find(item => item.severity === 'error' || item.severity === 'warning');
-    if (warning) {
-        setTimeout(() => showToast(
-            warning.message,
-            warning.severity === 'error' ? 'error' : 'warning'
-        ), 3200);
-    }
+    if (!warning) return;
+    // Share the tracked toast timer so a toast shown afterwards cancels the
+    // pending warning instead of being clobbered 3200ms later.
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => showToast(
+        warning.message,
+        warning.severity === 'error' ? 'error' : 'warning'
+    ), 3200);
 }
 
 export function reportError(context, error, userMessage) {
