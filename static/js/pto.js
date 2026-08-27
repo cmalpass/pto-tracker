@@ -178,6 +178,45 @@
         }));
     }
 
+    // Shared source of truth for PTO-year boundary rules, used by both the Settings
+    // save path (settings.js) and the import/write path (store.js validateRecord) so a
+    // crafted import can't inject out-of-year, duplicated, or unordered boundaries.
+    function validatePtoYearBoundaries(value) {
+        const errors = [];
+        if (!Array.isArray(value)) return errors;
+        const years = new Set();
+        const dates = new Set();
+        let previousDate = null;
+        value.forEach((boundary, index) => {
+            const year = Number(boundary?.year);
+            const finalDate = boundary?.final_date;
+            if (!Number.isInteger(year) || year < 1) {
+                errors.push(`PTO year boundary ${index + 1} must use a valid year.`);
+                return;
+            }
+            if (!isCanonicalDate(finalDate)) {
+                errors.push(`PTO year ${year} final day must use YYYY-MM-DD format.`);
+                return;
+            }
+            if (String(finalDate).slice(0, 4) !== String(year)) {
+                errors.push(`PTO year ${year} final day must be within ${year}.`);
+            }
+            if (years.has(year)) {
+                errors.push(`PTO year ${year} is configured more than once.`);
+            }
+            if (dates.has(finalDate)) {
+                errors.push(`PTO boundary date ${finalDate} is configured more than once.`);
+            }
+            if (previousDate && finalDate <= previousDate) {
+                errors.push('PTO year boundary dates must be unique and chronological.');
+            }
+            years.add(year);
+            dates.add(finalDate);
+            previousDate = finalDate;
+        });
+        return errors;
+    }
+
     function ptoYearEnd(year, config) {
         const normalized = normalizedConfig(config);
         const configured = normalized.pto_year_boundaries.find(item => item.year === Number(year));
@@ -1229,6 +1268,7 @@
         getLocalToday,
         getLocalYear,
         normalizePtoYearBoundaries,
+        validatePtoYearBoundaries,
         getPtoYearForDate,
         getPtoYearStart: ptoYearStart,
         getPtoYearEnd: ptoYearEnd,

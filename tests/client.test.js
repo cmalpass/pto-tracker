@@ -4,6 +4,9 @@ const PTO = require('../static/js/pto.js');
 const PTOStore = require('../static/js/store.js');
 const PTOTransfer = require('../static/js/transfer.js');
 
+// Mirror the browser global environment so store.js can resolve shared PTO helpers.
+globalThis.PTO = PTO;
+
 const config = {
     holiday_country: 'US',
     pto_accrual_per_pay_period: 1,
@@ -446,5 +449,120 @@ test('rejects invalid accrual_start_date strings on config write', async () => {
    await assert.rejects(
        () => PTOStore.putConfig({ ...config, accrual_start_date: '01/01/2026' }),
        /accrual_start_date must use YYYY-MM-DD/
+   );
+});
+
+test('validates PTO year boundaries with the shared validator', () => {
+   // A valid, chronological set passes.
+   assert.deepEqual(PTO.validatePtoYearBoundaries([
+       { year: 2025, final_date: '2025-12-31' },
+       { year: 2026, final_date: '2026-06-30' }
+   ]), []);
+
+   // A final day outside its own year is rejected, naming the year.
+   assert.deepEqual(PTO.validatePtoYearBoundaries([
+       { year: 2026, final_date: '2027-01-15' }
+   ]), ['PTO year 2026 final day must be within 2026.']);
+
+   // Unordered final dates are rejected.
+   assert.deepEqual(PTO.validatePtoYearBoundaries([
+       { year: 2026, final_date: '2026-06-30' },
+       { year: 2025, final_date: '2025-12-31' }
+   ]), ['PTO year boundary dates must be unique and chronological.']);
+
+   // Duplicate years are rejected.
+   assert.deepEqual(PTO.validatePtoYearBoundaries([
+       { year: 2026, final_date: '2026-06-30' },
+       { year: 2026, final_date: '2026-07-31' }
+   ]), ['PTO year 2026 is configured more than once.']);
+
+   // A non-integer year is rejected.
+   assert.deepEqual(PTO.validatePtoYearBoundaries([
+       { year: 'soon', final_date: '2026-06-30' }
+   ]), ['PTO year boundary 1 must use a valid year.']);
+
+   // A malformed final date is rejected.
+   assert.deepEqual(PTO.validatePtoYearBoundaries([
+       { year: 2026, final_date: '06/30/2026' }
+   ]), ['PTO year 2026 final day must use YYYY-MM-DD format.']);
+
+   // A repeated date is rejected (alongside the ordering rule it also trips).
+   const repeated = PTO.validatePtoYearBoundaries([
+       { year: 2025, final_date: '2025-06-30' },
+       { year: 2026, final_date: '2025-06-30' }
+   ]);
+   assert.ok(repeated.includes('PTO boundary date 2025-06-30 is configured more than once.'));
+   assert.ok(repeated.includes('PTO year boundary dates must be unique and chronological.'));
+
+   // Non-array input is treated as no boundaries.
+   assert.deepEqual(PTO.validatePtoYearBoundaries(null), []);
+   assert.deepEqual(PTO.validatePtoYearBoundaries(undefined), []);
+});
+
+test('rejects imports with out-of-year or unordered PTO year boundaries', async () => {
+   await PTOStore.clear('config');
+   await PTOStore.clear('vacations');
+   await PTOStore.putConfig({
+       ...config,
+       pto_year_boundaries: [{ year: 2025, final_date: '2025-12-31' }]
+   });
+   await PTOStore.putVacation({
+       name: 'Kept trip',
+       start_date: '2026-08-03',
+       end_date: '2026-08-03',
+       days: 1,
+       hours: 0
+   });
+
+   // Out-of-year boundary: rejected, nothing written.
+   await assert.rejects(
+       () => PTOStore.importJSON({
+           schemaVersion: 3,
+           data: {
+               config: { ...config, pto_year_boundaries: [{ year: 2026, final_date: '2027-01-15' }] },
+               vacations: [{
+                   name: 'Should not appear',
+                   start_date: '2026-09-01',
+                   end_date: '2026-09-01',
+                   days: 1,
+                   hours: 0
+               }],
+               notes: []
+           }
+       }),
+       /PTO year 2026 final day must be within 2026/
+   );
+
+   // Unordered boundaries: rejected, nothing written.
+   await assert.rejects(
+       () => PTOStore.importJSON({
+           schemaVersion: 3,
+           data: {
+               config: { ...config, pto_year_boundaries: [
+                   { year: 2026, final_date: '2026-06-30' },
+                   { year: 2025, final_date: '2025-12-31' }
+               ] },
+               vacations: [],
+               notes: []
+           }
+       }),
+       /must be unique and chronological/
+   );
+
+   // Stored state is unchanged: original boundary and original vacation remain.
+   const stored = await PTOStore.getConfig();
+   assert.deepEqual(stored.pto_year_boundaries, [{ year: 2025, final_date: '2025-12-31' }]);
+   const vacations = await PTOStore.listVacations();
+   assert.equal(vacations.length, 1);
+   assert.equal(vacations[0].name, 'Kept trip');
+});
+
+test('rejects config writes with invalid PTO year boundaries', async () => {
+   await assert.rejects(
+       () => PTOStore.putConfig({
+           ...config,
+           pto_year_boundaries: [{ year: 2026, final_date: '2027-01-15' }]
+       }),
+       /PTO year 2026 final day must be within 2026/
    );
 });
