@@ -940,3 +940,35 @@ test('continuous days off stops at uncovered holidays when they require PTO', ()
         .weeks.find(week => week.start_date === '2026-01-12');
     assert.equal(offWeek.total_days_off, 4);
 });
+
+test('forfeiture alert dates the loss from the PTO year end, not a fixed Jan 1', () => {
+    const notifications = require('../static/js/modules/notifications.js');
+    const forfeitConfig = { ...config, pto_uses_rollover: false };
+
+    // Default calendar PTO year: 2026 ends 2026-12-31, so the date is 2027-01-01.
+    const defaultAlerts = notifications.generateNotifications({
+        pto: PTO, config: forfeitConfig, vacations: [], today: '2026-12-15'
+    });
+    const defaultForfeit = defaultAlerts.find(item => item.type === 'carryover-forfeiture');
+    assert.ok(defaultForfeit, 'forfeiture alert expected without rollover');
+    assert.ok(
+        defaultForfeit.message.includes('on 2027-01-01'),
+        `expected 2027-01-01 in: ${defaultForfeit.message}`
+    );
+
+    // Custom PTO year: 2026 runs until 2027-06-30, so the projected forfeiture
+    // date is the day after the configured year end.
+    const customConfig = {
+        ...forfeitConfig,
+        pto_year_boundaries: [{ year: 2026, final_date: '2027-06-30' }]
+    };
+    const customAlerts = notifications.generateNotifications({
+        pto: PTO, config: customConfig, vacations: [], today: '2026-12-15'
+    });
+    const customForfeit = customAlerts.find(item => item.type === 'carryover-forfeiture');
+    assert.ok(customForfeit, 'forfeiture alert expected with custom PTO year');
+    assert.ok(
+        customForfeit.message.includes('on 2027-07-01'),
+        `expected 2027-07-01 in: ${customForfeit.message}`
+    );
+});

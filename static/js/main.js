@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-17';
+} from './modules/state.js?v=20260813-18';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-17';
+} from './modules/dom.js?v=20260813-18';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,24 +30,24 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-17';
+} from './modules/rendering.js?v=20260813-18';
 import {
     dismissNotification,
     generateNotifications,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-17';
+} from './modules/notifications.js?v=20260813-18';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-17';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-17';
-import { configWarnings } from './modules/settings.js?v=20260813-17';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-17';
+} from './modules/calendar.js?v=20260813-18';
+import { generateSuggestions } from './modules/suggestions.js?v=20260813-18';
+import { configWarnings } from './modules/settings.js?v=20260813-18';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-18';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-17';
+} from './modules/forecast.js?v=20260813-18';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
