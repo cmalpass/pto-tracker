@@ -216,6 +216,23 @@ body {
     border-left-color: var(--warning);
 }
 
+.storage-status-banner {
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--warning);
+    border-left: 4px solid var(--warning);
+    border-radius: var(--radius);
+    background: var(--card);
+    color: var(--text);
+    font-weight: 500;
+    box-shadow: var(--shadow);
+}
+
+.storage-status-banner.danger {
+    border-color: var(--danger);
+    border-left-color: var(--danger);
+}
+
 /* Navigation Tabs */
 .nav-tabs {
     display: flex;

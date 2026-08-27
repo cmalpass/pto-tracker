@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import time
 import traceback
 
 from playwright.async_api import async_playwright
@@ -655,6 +656,104 @@ async def test_import_rejects_invalid_pto_year_boundaries(browser):
         await context.close()
 
 
+async def wait_for_storage_status(page, target, timeout=15.0):
+    """Poll PTOStore's storage status via page.evaluate.
+
+    String-based page.wait_for_function evaluates through eval() inside the
+    injected script, which the app's CSP (script-src without 'unsafe-eval')
+    intermittently blocks. page.evaluate sends the expression directly and
+    is CSP-safe.
+    """
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        last = await page.evaluate(
+            "() => window.PTOStore && typeof window.PTOStore.getStorageStatus === 'function'"
+            " ? window.PTOStore.getStorageStatus().state : null"
+        )
+        if last == target:
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"storage status never reached {target!r} (last seen: {last!r})")
+
+
+async def test_indexeddb_block_degrades_visibly_and_reconciles(browser):
+    # Holds a version-1 connection before the app loads so the app's
+    # version-3 open fires onblocked. Init scripts run before page scripts,
+    # so the blocker is guaranteed to open first on every load.
+    blocker_script = """
+    window.__ptoBlockerReady = new Promise(resolve => {
+        const blocker = indexedDB.open('pto-tracker', 1);
+        window.__ptoBlocker = blocker;
+        blocker.onsuccess = () => resolve();
+        blocker.onerror = () => resolve();
+    });
+    """
+    context = await browser.new_context()
+    page = await context.new_page()
+    try:
+        await context.add_init_script(blocker_script)
+        await page.goto(BASE_URL)
+        await wait_for_storage_status(page, "blocked")
+
+        banner = page.locator("#storage-degraded-banner")
+        assert await banner.is_visible()
+        assert "degraded mode" in await banner.text_content()
+
+        vacation_id = await page.evaluate(
+            """async () => {
+                const vacation = await PTOStore.putVacation({
+                    name: 'Blocked tab trip',
+                    start_date: '2026-10-01',
+                    end_date: '2026-10-01',
+                    days: 1,
+                    hours: 0
+                });
+                const listed = await PTOStore.listVacations();
+                return { id: vacation.id, count: listed.length };
+            }"""
+        )
+        assert vacation_id["count"] == 1
+
+        # Reload while still blocked: data written during the degraded
+        # window must survive in fallback storage.
+        await page.reload()
+        await wait_for_storage_status(page, "blocked")
+        assert (await page.evaluate("() => PTOStore.listVacations().then(v => v.length)")) == 1
+        assert await page.locator("#storage-degraded-banner").is_visible()
+
+        # Release the blocking connection: the app's still-live open request
+        # upgrades the database, reconciles the fallback data, and recovers
+        # without a reload.
+        await page.evaluate("() => window.__ptoBlocker.result.close()")
+        await wait_for_storage_status(page, "ok")
+        assert not await page.locator("#storage-degraded-banner").is_visible()
+        assert (await page.evaluate("() => PTOStore.listVacations().then(v => v.length)")) == 1
+        live_ids = await page.evaluate(
+            """() => new Promise((resolve, reject) => {
+                const request = indexedDB.open('pto-tracker', 3);
+                request.onsuccess = () => {
+                    const db = request.result;
+                    const read = db.transaction('vacations', 'readonly')
+                        .objectStore('vacations').getAllKeys();
+                    read.onsuccess = () => { db.close(); resolve(read.result); };
+                    read.onerror = () => reject(read.error);
+                };
+                request.onerror = () => reject(request.error);
+            })"""
+        )
+        assert live_ids == [vacation_id["id"]]
+
+        # After a final reload the blocker's open fails (lower version) and
+        # the app opens the upgraded database cleanly.
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        assert not await page.locator("#storage-degraded-banner").is_visible()
+        assert (await page.evaluate("() => PTOStore.listVacations().then(v => v.length)")) == 1
+    finally:
+        await context.close()
+
+
 async def main():
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
@@ -675,6 +774,7 @@ async def main():
             test_theme_controls_meet_contrast,
             test_mobile_layout_and_touch_targets,
             test_module_loading_and_browser_value_escaping,
+            test_indexeddb_block_degrades_visibly_and_reconciles,
         ]
         failures = []
         for test in tests:

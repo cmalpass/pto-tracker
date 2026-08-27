@@ -566,3 +566,177 @@ test('rejects config writes with invalid PTO year boundaries', async () => {
        /PTO year 2026 final day must be within 2026/
    );
 });
+
+// --- Fake IndexedDB for storage status tests ---------------------------------
+
+function createFakeIndexedDb(requests) {
+   return {
+       open: (name, version) => {
+           const request = {};
+           requests.push(request);
+           return request;
+       }
+   };
+}
+
+function createFakeDatabase(stores) {
+   const db = {
+       open: true,
+       objectStoreNames: { contains: name => Boolean(stores[name]) },
+       close() {
+           this.open = false;
+       }
+   };
+   db.transaction = storeName => {
+       const transaction = {};
+       const objectStore = {
+           get: id => storeRequest(transaction, () =>
+               (stores[storeName] || []).find(record => record.id === id)),
+           getAll: () => storeRequest(transaction, () =>
+               (stores[storeName] || []).map(record => ({ ...record }))),
+           getAllKeys: () => storeRequest(transaction, () =>
+               (stores[storeName] || []).map(record => record.id)),
+           put: record => storeRequest(transaction, () => {
+               const array = stores[storeName] || (stores[storeName] = []);
+               const existing = array.find(item => item.id === record.id);
+               if (existing) Object.assign(existing, record);
+               else array.push({ ...record });
+               return record.id;
+           }),
+           clear: () => storeRequest(transaction, () => {
+               stores[storeName] = [];
+           })
+       };
+       // Return the transaction itself (not a wrapper): idbRequest assigns
+       // oncomplete/onerror to the return value of db.transaction().
+       transaction.objectStore = () => objectStore;
+       return transaction;
+   };
+   return db;
+}
+
+// Mirrors the IndexedDB request contract: handlers are assigned synchronously
+// after the operation returns, then onsuccess fires before transaction.oncomplete.
+function storeRequest(transaction, compute) {
+   const request = {};
+   queueMicrotask(() => {
+       request.result = compute();
+       if (request.onsuccess) request.onsuccess();
+       if (transaction.oncomplete) transaction.oncomplete();
+   });
+   return request;
+}
+
+test('degrades to fallback storage when IndexedDB open is blocked and reconnects', async () => {
+   PTOStore.resetStorageConnection();
+   localStorageData.clear();
+   const statuses = [];
+   const unsubscribe = PTOStore.onStorageStatusChange(status => statuses.push(status.state));
+   const requests = [];
+   globalThis.indexedDB = createFakeIndexedDb(requests);
+   try {
+       assert.equal(PTOStore.getStorageStatus().state, 'connecting');
+
+       // Start the write without awaiting: the open request is issued
+       // synchronously inside the first storage call.
+       const vacationPromise = PTOStore.putVacation({
+           name: 'Blocked tab trip',
+           start_date: '2026-10-01',
+           end_date: '2026-10-01',
+           days: 1,
+           hours: 0
+       });
+       assert.equal(requests.length, 1);
+
+       // Another connection holds the database: degrade without hanging.
+       requests[0].onblocked();
+       const vacation = await vacationPromise;
+       assert.equal(PTOStore.getStorageStatus().state, 'blocked');
+       assert.ok(vacation.id > 0);
+       const degraded = await PTOStore.listVacations();
+       assert.equal(degraded.length, 1);
+       assert.equal(degraded[0].name, 'Blocked tab trip');
+
+       // The other connection closes: the still-live open request completes,
+       // the store reconciles the fallback data, and the status flips to ok.
+       const liveStores = { vacations: [], notes: [], history: [] };
+       requests[0].result = createFakeDatabase(liveStores);
+       requests[0].onsuccess();
+       await new Promise(resolve => setImmediate(resolve));
+
+       assert.equal(PTOStore.getStorageStatus().state, 'ok');
+       const reconciled = await PTOStore.listVacations();
+       assert.equal(reconciled.length, 1);
+       assert.equal(reconciled[0].name, 'Blocked tab trip');
+       assert.equal(liveStores.vacations.length, 1);
+       assert.equal(liveStores.vacations[0].name, 'Blocked tab trip');
+       assert.deepEqual(statuses, ['connecting', 'blocked', 'ok']);
+   } finally {
+       unsubscribe();
+       delete globalThis.indexedDB;
+       PTOStore.resetStorageConnection();
+   }
+});
+
+test('surfaces IndexedDB open errors and keeps fallback storage usable', async () => {
+   PTOStore.resetStorageConnection();
+   localStorageData.clear();
+   const requests = [];
+   globalThis.indexedDB = createFakeIndexedDb(requests);
+   try {
+       const vacationPromise = PTOStore.putVacation({
+           name: 'Error trip',
+           start_date: '2026-10-02',
+           end_date: '2026-10-02',
+           days: 1,
+           hours: 0
+       });
+       assert.equal(requests.length, 1);
+       requests[0].error = new Error('SecurityError');
+       requests[0].onerror();
+
+       const vacation = await vacationPromise;
+       const status = PTOStore.getStorageStatus();
+       assert.equal(status.state, 'error');
+       assert.match(status.reason, /SecurityError/);
+       assert.ok(vacation.id > 0);
+       const vacations = await PTOStore.listVacations();
+       assert.equal(vacations.length, 1);
+       assert.equal(vacations[0].name, 'Error trip');
+   } finally {
+       delete globalThis.indexedDB;
+       PTOStore.resetStorageConnection();
+   }
+});
+
+test('reports missing IndexedDB and supports status subscriptions', async () => {
+   PTOStore.resetStorageConnection();
+   localStorageData.clear();
+   delete globalThis.indexedDB;
+   const seen = [];
+   const unsubscribe = PTOStore.onStorageStatusChange(status => seen.push(status.state));
+   assert.deepEqual(seen, ['connecting']);
+   try {
+       await PTOStore.putVacation({
+           name: 'No IDB trip',
+           start_date: '2026-10-03',
+           end_date: '2026-10-03',
+           days: 1,
+           hours: 0
+       });
+       const status = PTOStore.getStorageStatus();
+       assert.equal(status.state, 'no_indexeddb');
+       assert.match(status.reason, /not available/);
+       assert.deepEqual(seen, ['connecting', 'no_indexeddb']);
+
+       unsubscribe();
+       PTOStore.resetStorageConnection();
+       await PTOStore.listVacations();
+       assert.equal(PTOStore.getStorageStatus().state, 'no_indexeddb');
+       assert.deepEqual(seen, ['connecting', 'no_indexeddb']);
+   } finally {
+       unsubscribe();
+       delete globalThis.indexedDB;
+       PTOStore.resetStorageConnection();
+   }
+});
