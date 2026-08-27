@@ -21,7 +21,7 @@ def set_security_headers(response):
         "base-uri 'self'; "
         "form-action 'self'; "
         "object-src 'none'; "
-        "script-src 'self' https://cdn.jsdelivr.net; "
+        "script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js; "
         "style-src 'self' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "

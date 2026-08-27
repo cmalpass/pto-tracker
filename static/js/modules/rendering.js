@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260813-19';
-import { clearElement, element, appendText } from './dom.js?v=20260813-19';
+import { DAYS, MONTHS, state } from './state.js?v=20260813-20';
+import { clearElement, element, appendText } from './dom.js?v=20260813-20';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -192,7 +192,13 @@ export function renderCalendar(year, month, today, monthEvents) {
         ].filter(Boolean);
         cell.setAttribute('aria-label', [dateLabel, ...stateLabels].join('. '));
         cell.title = cell.getAttribute('aria-label');
-        const vacationEvent = dayEvents.find(event => event.type === 'vacation' && event.id);
+        // When several vacations share a day, pick the earliest one (start
+        // date, then id) so the cell's edit target is deterministic.
+        const vacationEvent = dayEvents
+            .filter(event => event.type === 'vacation' && event.id)
+            .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || ''))
+                || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }))
+            [0];
         if (vacationEvent) cell.dataset.vacationId = vacationEvent.id;
         appendText(cell, 'span', 'day-number', day);
         dayEvents.slice(0, 2).forEach(event => {
