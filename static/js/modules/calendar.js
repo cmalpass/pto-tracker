@@ -1,4 +1,4 @@
-import { state } from './state.js?v=20260813-14';
+import { state } from './state.js?v=20260813-15';
 
 export function calendarData(year, month) {
     const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;

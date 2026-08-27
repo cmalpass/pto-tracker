@@ -5,6 +5,7 @@ import json
 import os
 import time
 import traceback
+from datetime import datetime
 
 from playwright.async_api import async_playwright
 
@@ -71,6 +72,36 @@ async def test_dashboard_and_forecast(browser):
         await page.click("button:has-text('Forecast')")
         await page.wait_for_selector(".forecast-table tbody tr")
         assert await page.locator(".forecast-table tbody tr").count() == 12
+    finally:
+        await context.close()
+
+
+async def test_year_selectors_track_the_current_pto_year(browser):
+    """Year selectors are populated dynamically so the current PTO year
+    stays an option even after the hardcoded HTML options go stale."""
+    context, page = await new_page(browser)
+    try:
+        await page.clock.install()
+        await page.clock.set_fixed_time(datetime(2029, 6, 1, 12, 0, 0))
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        # Heatmap options are populated when its tab activates.
+        await page.click("#tab-heatmap-tab")
+        # Forecast tab re-runs loadForecast, which also loads the multi-year outlook.
+        await page.click("#tab-forecast-tab")
+        await page.wait_for_selector(".forecast-table tbody tr")
+        assert await page.locator(".forecast-table tbody tr").count() == 12
+        for select_id in ("forecast-year", "heatmap-year", "multi-year-start"):
+            options = await page.locator(f"#{select_id} option").all()
+            values = [await option.get_attribute("value") for option in options]
+            assert "2029" in values, f"{select_id} is missing the 2029 option"
+            # The selected option does not carry a `selected` attribute in the
+            # serialized DOM, so read the select's selectedIndex instead.
+            selected = await page.locator(f"#{select_id}").evaluate(
+                "select => select.selectedIndex >= 0"
+                " ? select.options[select.selectedIndex].value : null"
+            )
+            assert selected == "2029", f"{select_id}: expected 2029 selected, got {selected}"
     finally:
         await context.close()
 
@@ -759,6 +790,7 @@ async def main():
         browser = await playwright.chromium.launch()
         tests = [
             test_dashboard_and_forecast,
+            test_year_selectors_track_the_current_pto_year,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,
