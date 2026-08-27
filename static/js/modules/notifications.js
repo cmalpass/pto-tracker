@@ -197,4 +197,20 @@ export function visibleNotifications(alerts, storage) {
     return (alerts || []).filter(alert => !dismissed.has(alert.fingerprint));
 }
 
+// Fingerprints embed balances that change over time, so the dismissed list
+// would otherwise grow forever. Keep only fingerprints that still match a
+// currently generated alert; stale entries are dropped.
+export function pruneDismissedFingerprints(alerts, storage) {
+    const source = storageOrDefault(storage);
+    if (!source) return;
+    const current = new Set((alerts || [])
+        .map(alert => alert?.fingerprint)
+        .filter(Boolean));
+    const dismissed = getDismissedFingerprints(source);
+    const kept = [...dismissed].filter(fingerprint => current.has(fingerprint));
+    if (kept.length !== dismissed.size) {
+        source.setItem(DISMISSED_KEY, JSON.stringify(kept.sort()));
+    }
+}
+
 export { DISMISSED_KEY };
