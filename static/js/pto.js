@@ -872,22 +872,26 @@
         };
     }
 
-    function continuousDaysOffInterval(ptoDates, holidays, minDate, maxDate) {
+    function continuousDaysOffInterval(ptoDates, holidays, minDate, maxDate, requiresPto) {
         if (!ptoDates.size) return null;
         const sorted = [...ptoDates].sort();
         let start = parseCanonicalDate(sorted[0]);
         let end = parseCanonicalDate(sorted[sorted.length - 1]);
         const lower = minDate || dateOf(start.getUTCFullYear(), 1, 1);
         const upper = maxDate || dateOf(end.getUTCFullYear(), 12, 31);
-        const isOff = day => !isBusinessDay(day) || holidays.has(formatDate(day))
-            || ptoDates.has(formatDate(day));
+        // When holidays require PTO, an uncovered holiday is a working day,
+        // so the stretch stops there; only weekends and the candidate's own
+        // dates (which include any covered holidays) continue it.
+        const isOff = day => !isBusinessDay(day) || ptoDates.has(formatDate(day))
+            || (!requiresPto && holidays.has(formatDate(day)));
         while (addDays(start, -1) >= lower && isOff(addDays(start, -1))) start = addDays(start, -1);
         while (addDays(end, 1) <= upper && isOff(addDays(end, 1))) end = addDays(end, 1);
         return [start, end];
     }
 
-    function continuousDaysOffCount(ptoDates, holidays, minDate, maxDate) {
-        const interval = continuousDaysOffInterval(ptoDates, holidays, minDate, maxDate);
+    function continuousDaysOffCount(ptoDates, holidays, minDate, maxDate, requiresPto) {
+        const interval = continuousDaysOffInterval(
+            ptoDates, holidays, minDate, maxDate, requiresPto);
         return interval ? daysBetween(interval[0], interval[1]) + 1 : 0;
     }
 
@@ -923,7 +927,8 @@
             for (const selected of combinations(candidates, needed, 0, [], [])) {
                 const selectedSet = new Set(selected.map(formatDate));
                 const total = continuousDaysOffCount(
-                    selectedSet, holidays, dateOf(year, 1, 1), dateOf(year, 12, 31));
+                    selectedSet, holidays, dateOf(year, 1, 1), dateOf(year, 12, 31),
+                    requiresPto);
                 const score = total / needed;
                 if (score > result.score) {
                     result = {
@@ -994,7 +999,8 @@
             && (requiresPto || !holidays.has(formatDate(day)))).map(formatDate);
         const interval = continuousDaysOffInterval(
             new Set(allDates.map(formatDate)), holidays,
-            dateOf(start.getUTCFullYear(), 1, 1), dateOf(start.getUTCFullYear(), 12, 31));
+            dateOf(start.getUTCFullYear(), 1, 1), dateOf(start.getUTCFullYear(), 12, 31),
+            requiresPto);
         const expanded = interval ? dateRange(interval[0], interval[1]) : allDates;
         const ptoSet = new Set(ptoDates);
         return {
