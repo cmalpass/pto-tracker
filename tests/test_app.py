@@ -165,6 +165,35 @@ async def test_forecast_spans_fiscal_pto_year(browser):
         await context.close()
 
 
+async def test_settings_dialog_preserves_zero_carryover_limit(browser):
+    """A stored carryover limit of 0 (valid 'no carryover' setting) must
+    display as 0 in the settings dialog and remain 0 after save, not fall
+    back to the 40-day default."""
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        await page.evaluate(
+            """async () => {
+                const base = await PTOStore.getConfig();
+                await PTOStore.putConfig({...base, pto_carryover_limit: 0});
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        await page.click("#btn-settings")
+        await page.wait_for_selector("#settings-modal.active")
+        assert await page.locator("#carryover-limit").input_value() == "0"
+        await page.click("button:has-text('Save Settings')")
+        await page.wait_for_selector("#settings-modal.active", state="hidden")
+        stored = await page.evaluate(
+            "() => PTOStore.getConfig().then(config => config.pto_carryover_limit)"
+        )
+        assert float(stored) == 0
+    finally:
+        await context.close()
+
+
 async def test_smart_notifications_generate_and_link_to_actions(browser):
     context, page = await new_page(browser)
     try:
@@ -851,6 +880,7 @@ async def main():
             test_dashboard_and_forecast,
             test_year_selectors_track_the_current_pto_year,
             test_forecast_spans_fiscal_pto_year,
+            test_settings_dialog_preserves_zero_carryover_limit,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,
