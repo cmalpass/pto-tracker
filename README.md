@@ -96,6 +96,24 @@ To capture review screenshots against another local port, set
 `PTO_TEST_BASE_URL` before running `screenshot.py`. Screenshots are generated
 under the ignored `screenshots/` directory and are not source artifacts.
 
+## Static hosting
+
+The app is a plain static site: `templates/index.html` (no server-side
+templating) plus the `static/` directory. Asset references are relative, so
+it works at a domain root or in any subdirectory, for example
+`https://example.com/pto-tracker/`:
+
+```bash
+cp templates/index.html <webroot>/index.html
+cp -R static <webroot>/static/
+```
+
+Serve the page from the directory URL (with a trailing slash) so the relative
+paths resolve. Any static file server works. Chart.js and the Inter font load
+from public CDNs, so visitors need internet access. Optionally set the same
+security headers the Flask development server adds (CSP, nosniff, framing);
+see `app.py`.
+
 ## Docker
 
 ```bash

@@ -889,7 +889,9 @@ async def test_module_loading_and_browser_value_escaping(browser):
     context, page = await new_page(browser)
     try:
         await open_app(page)
-        assert await page.locator("script[type='module'][src*='/static/js/app.js']").count() == 1
+        # No leading slash: asset paths are relative so the app also works
+        # when deployed under a subdirectory (e.g. /pto-tracker/).
+        assert await page.locator("script[type='module'][src*='static/js/app.js']").count() == 1
         asset_versions = await page.locator(
             "link[href*='?v='], script[src*='?v=']"
         ).evaluate_all(
