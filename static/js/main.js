@@ -257,13 +257,11 @@ async function loadDashboard() {
         refreshNotifications();
         await loadForecast();
         const balance = PTO.calculateBalanceOnDate(config.current_date, config, vacations);
-        const yearlyForecast = yearlyForecastFor(config.current_year, config, vacations);
         const typeBreakdown = PTO.getVacationTypeBreakdown(config.current_year, config, vacations);
         const remainingUsage = PTO.calculateVacationUsageInRange(
             config.current_date, PTO.getPtoYearEnd(config.current_year, config), config, vacations);
         const stats = {
             current_balance: balance,
-            yearly_forecast: yearlyForecast,
             upcoming_vacations: vacations.filter(item => item.end_date >= config.current_date).length,
             remaining_scheduled_pto_days: config.pto_accrual_type === 'hours'
                 ? (remainingUsage.days * Number(config.pto_hours_per_day || 8)) + remainingUsage.hours
@@ -278,11 +276,11 @@ async function loadDashboard() {
         document.getElementById('accrued-balance').textContent = balance.accrued.toFixed(1);
         document.getElementById('used-balance').textContent = balance.used.toFixed(1);
         document.getElementById('limit-balance').textContent = balance.limit.toFixed(1);
-        const ytdForecast = stats.yearly_forecast || [];
-        const ytdRow = ytdForecast.find(row => row.month === state.today.slice(0, 7))
-            || ytdForecast[ytdForecast.length - 1];
-        const ytdAccrued = ytdRow?.accrued || 0;
-        document.getElementById('stat-accrued-ytd').textContent = ytdAccrued.toFixed(1);
+        // "Accrued YTD" and "Used YTD" are both as-of-today, matching the balance
+        // card's "Accrued"/"Used" and keeping accrued - used = current balance.
+        // (Previously this used the current month's end-of-month forecast row,
+        // which overstated accrual relative to the other dashboard values.)
+        document.getElementById('stat-accrued-ytd').textContent = balance.accrued.toFixed(1);
         document.getElementById('stat-used-ytd').textContent = stats.current_balance?.used?.toFixed(1) || '0.0';
         document.getElementById('stat-upcoming').textContent = stats.upcoming_vacations || 0;
         const scheduledPtoDays = stats.remaining_scheduled_pto_days ?? stats.remaining_vacation_days ?? 0;
