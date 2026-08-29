@@ -740,10 +740,12 @@
             const yearStart = parseCanonicalDate(ptoYearStart(year, normalized));
             const yearEnd = parseCanonicalDate(ptoYearEnd(year, normalized));
             const yearEndResult = calculateBalanceOnDate(formatDate(yearEnd), normalized, vacations || []);
-            const totalAccrued = normalized.forecast_baseline_enabled
-                ? yearEndResult.accrued
-                : calculateAccrualToDate(formatDate(yearEnd), normalized)
-                    - calculateAccrualToDate(formatDate(addDays(yearStart, -1)), normalized);
+            // Report year-only accrual regardless of baseline mode. The baseline
+            // opening balance (and any prior-year carryover) is shown separately
+            // in the carryover / year_end_balance columns, so folding it into
+            // "Accrued" here would double-count it across years.
+            const totalAccrued = calculateAccrualToDate(formatDate(yearEnd), normalized)
+                - calculateAccrualToDate(formatDate(addDays(yearStart, -1)), normalized);
             const usage = calculateVacationUsageInRange(yearStart, yearEnd, normalized, vacations || []);
             const totalUsed = normalized.forecast_baseline_enabled
                 ? yearEndResult.used
