@@ -138,6 +138,7 @@ export function startApplication() {
         setupNotifications();
         setupSettings();
         setupVacationModal();
+        setupOnboarding();
         setupVacationList();
         setupCalendar();
         await setupNotes();
@@ -254,6 +255,7 @@ async function loadDashboard() {
         state.currentMonth = now.getMonth();
         state.currentPtoYear = config.current_year;
         updateUnitLabels(config);
+        refreshOnboarding(config);
         refreshNotifications();
         await loadForecast();
         const balance = PTO.calculateBalanceOnDate(config.current_date, config, vacations);
@@ -276,12 +278,9 @@ async function loadDashboard() {
         document.getElementById('accrued-balance').textContent = balance.accrued.toFixed(1);
         document.getElementById('used-balance').textContent = balance.used.toFixed(1);
         document.getElementById('limit-balance').textContent = balance.limit.toFixed(1);
-        // "Accrued YTD" and "Used YTD" are both as-of-today, matching the balance
-        // card's "Accrued"/"Used" and keeping accrued - used = current balance.
-        // (Previously this used the current month's end-of-month forecast row,
-        // which overstated accrual relative to the other dashboard values.)
-        document.getElementById('stat-accrued-ytd').textContent = balance.accrued.toFixed(1);
-        document.getElementById('stat-used-ytd').textContent = stats.current_balance?.used?.toFixed(1) || '0.0';
+        // "Accrued"/"Used" on the balance card are the canonical as-of-today
+        // values; Quick Stats shows only the distinctive scheduled/upcoming
+        // stats to avoid duplicating the balance card.
         document.getElementById('stat-upcoming').textContent = stats.upcoming_vacations || 0;
         const scheduledPtoDays = stats.remaining_scheduled_pto_days ?? stats.remaining_vacation_days ?? 0;
         document.getElementById('stat-scheduled-pto').textContent = Number(scheduledPtoDays).toFixed(1);
@@ -310,6 +309,26 @@ async function loadDashboard() {
         console.error('Failed to load dashboard:', err);
         showToast('Failed to load dashboard', 'error');
     }
+}
+
+function refreshOnboarding(config) {
+    const panel = document.getElementById('onboarding-panel');
+    if (!panel) return;
+    panel.hidden = config.configured === true;
+    panel.setAttribute('aria-hidden', String(panel.hidden));
+}
+
+function setupOnboarding() {
+    const settingsBtn = document.getElementById('btn-onboarding-settings');
+    if (settingsBtn) settingsBtn.addEventListener('click', () => {
+        openSettings();
+        window.setTimeout(() => {
+            const preset = document.getElementById('policy-preset');
+            if (preset) preset.focus({ preventScroll: true });
+        }, 0);
+    });
+    const vacationBtn = document.getElementById('btn-onboarding-vacation');
+    if (vacationBtn) vacationBtn.addEventListener('click', () => openCreateVacationModal());
 }
 
 function refreshNotifications() {
@@ -412,8 +431,6 @@ function updateUnitLabels(config) {
         'accrued-label': `Accrued (${unit})`,
         'used-label': `Used (${unit})`,
         'limit-label': `Limit (${unit})`,
-        'stat-accrued-ytd-label': `Accrued YTD (${unit})`,
-        'stat-used-ytd-label': `Used YTD (${unit})`,
         'stat-scheduled-pto-label': `Scheduled PTO Remaining (${unit})`,
         'carryover-limit-label': `Carryover Limit (${unit})`,
         'forecast-accrued-heading': `Accrued (${unit})`,
@@ -1258,7 +1275,7 @@ function setupSettings() {
             else data[el.name] = el.value;
         }
         try {
-            const merged = { ...state.config, ...data };
+            const merged = { ...state.config, ...data, configured: true };
             merged.pto_year_boundaries = collectPtoYearBoundaries();
             delete merged.current_date;
             delete merged.current_year;
@@ -1380,7 +1397,7 @@ async function applyPolicy() {
     if (!preset) return;
     if (!window.confirm(`Apply the "${preset.name}" preset? This will replace the current PTO settings.`)) return;
     try {
-        const config = { ...DEFAULT_CONFIG, ...preset.settings };
+        const config = { ...DEFAULT_CONFIG, ...preset.settings, configured: true };
         await PTOStore.putConfig(config);
         state.config = await getRuntimeConfig();
         showToast('Policy preset applied!', 'success');

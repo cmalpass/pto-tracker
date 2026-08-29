@@ -158,7 +158,12 @@ export async function getStoredConfig() {
         Object.entries(stored || {}).filter(([, value]) => value != null)
     );
     const config = { ...DEFAULT_CONFIG, ...overrides };
-    if (!stored) await globalThis.PTOStore.putConfig(config);
+    // Persist resolved defaults on first run so a later putConfig (which is
+    // merged with the stored config) can't reintroduce nulls. `configured`
+    // stays false until the user explicitly saves or applies a preset, so
+    // first-run stays detectable for the onboarding panel.
+    config.configured = stored ? overrides.configured === true : false;
+    if (!stored) await globalThis.PTOStore.putConfig({ ...config, configured: false });
     return config;
 }
 

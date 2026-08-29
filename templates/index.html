@@ -114,6 +114,20 @@
                 <section class="dashboard-notification-alert" id="dashboard-notification-alert"
                          aria-label="Priority PTO reminder" hidden></section>
                 <div class="dashboard-grid">
+                    <div class="card onboarding-panel" id="onboarding-panel" hidden>
+                        <div class="empty-state-icon" aria-hidden="true">✈️</div>
+                        <h2 class="empty-state-title">Get Started with PTO Tracker</h2>
+                        <p class="empty-state-text">Set up your leave policy and add your first vacation to see your balance, forecast, and history come to life.</p>
+                        <div class="onboarding-actions">
+                            <button type="button" class="btn btn-primary" id="btn-onboarding-settings">
+                                Set up policy
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="btn-onboarding-vacation">
+                                Add vacation
+                            </button>
+                        </div>
+                    </div>
+
                     <div class="card balance-card">
                         <div class="card-header">
                             <h2>Current Balance</h2>
@@ -137,6 +151,24 @@
                                 <span class="breakdown-value" id="limit-balance">40.0</span>
                             </div>
                         </div>
+                        <div class="accrual-details">
+                            <div class="accrual-chip">
+                                <span class="accrual-chip-label">Per Pay Period</span>
+                                <span class="accrual-chip-value" id="dashboard-accrual-per-period">1.0 day</span>
+                            </div>
+                            <div class="accrual-chip">
+                                <span class="accrual-chip-label">Pay Periods/Year</span>
+                                <span class="accrual-chip-value" id="pay-periods">26</span>
+                            </div>
+                            <div class="accrual-chip">
+                                <span class="accrual-chip-label">Annual Accrual</span>
+                                <span class="accrual-chip-value" id="annual-accrual">26.0 days</span>
+                            </div>
+                            <div class="accrual-chip">
+                                <span class="accrual-chip-label">Next Accrual</span>
+                                <span class="accrual-chip-value" id="next-accrual-date">--</span>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card stats-card">
@@ -144,14 +176,6 @@
                             <h2>Quick Stats</h2>
                         </div>
                         <div class="stats-grid">
-                            <div class="stat-item">
-                                <div class="stat-value" id="stat-accrued-ytd">0.0</div>
-                                <div class="stat-label" id="stat-accrued-ytd-label">Accrued YTD</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-value" id="stat-used-ytd">0.0</div>
-                                <div class="stat-label" id="stat-used-ytd-label">Used YTD</div>
-                            </div>
                             <div class="stat-item">
                                 <div class="stat-value" id="stat-upcoming">0</div>
                                 <div class="stat-label">Upcoming Trips</div>
@@ -173,30 +197,6 @@
                             <span class="section-hint">Current year</span>
                         </div>
                         <div id="type-breakdown" class="type-breakdown" aria-live="polite"></div>
-                    </div>
-
-                    <div class="card accrual-card">
-                        <div class="card-header">
-                            <h2>Accrual Info</h2>
-                        </div>
-                        <div class="accrual-details">
-                            <div class="accrual-row">
-                                <span>Per Pay Period</span>
-                                <span id="dashboard-accrual-per-period">1.0 day</span>
-                            </div>
-                            <div class="accrual-row">
-                                <span>Pay Periods/Year</span>
-                                <span id="pay-periods">26</span>
-                            </div>
-                            <div class="accrual-row">
-                                <span>Annual Accrual</span>
-                                <span id="annual-accrual">26.0 days</span>
-                            </div>
-                            <div class="accrual-row">
-                                <span>Next Accrual</span>
-                                <span id="next-accrual-date">--</span>
-                            </div>
-                        </div>
                     </div>
 
                     <div class="card month-card">
@@ -471,6 +471,27 @@
                             <label for="accrual-start">Accrual Start Date</label>
                             <input type="date" id="accrual-start" name="accrual_start_date">
                         </div>
+                        <div class="form-group checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="rollover" name="pto_uses_rollover" checked>
+                                <span>Allow rollover</span>
+                            </label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="lose-limit" name="pto_lose_above_limit" checked>
+                                <span>Cap at carryover limit</span>
+                            </label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="holidays-require-pto" name="pto_holidays_require_pto">
+                                <span>Holidays require PTO</span>
+                            </label>
+                        </div>
+                        <details class="advanced-settings">
+                            <summary>Advanced settings</summary>
+                            <div class="advanced-settings-body">
                         <div class="form-group" id="pto-year-boundaries">
                             <label>PTO Year Final Days</label>
                             <small class="form-help">Optional overrides for each PTO year. Dates are inclusive; years without an override end on December 31.</small>
@@ -513,24 +534,8 @@
                                    min="1900" max="2100" step="1" inputmode="numeric">
                             <small class="form-help">Year you started accruing; used by graded and cliff vesting.</small>
                         </div>
-                        <div class="form-group checkbox-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="rollover" name="pto_uses_rollover" checked>
-                                <span>Allow rollover</span>
-                            </label>
-                        </div>
-                        <div class="form-group checkbox-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="lose-limit" name="pto_lose_above_limit" checked>
-                                <span>Cap at carryover limit</span>
-                            </label>
-                        </div>
-                        <div class="form-group checkbox-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="holidays-require-pto" name="pto_holidays_require_pto">
-                                <span>Holidays require PTO</span>
-                            </label>
-                        </div>
+                            </div>
+                        </details>
                         <div class="form-actions">
                             <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Cancel</button>
                             <button type="submit" class="btn btn-primary">Save Settings</button>
