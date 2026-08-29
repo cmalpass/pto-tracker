@@ -138,14 +138,17 @@ async def test_forecast_spans_fiscal_pto_year(browser):
                 const today = PTO.getLocalToday(config);
                 const year = PTO.getPtoYearForDate(today, config);
                 const rows = PTO.generateYearlyForecast(year, config, vacations);
-                const ytd = rows.find(row => row.month === today.slice(0, 7))
-                    || rows[rows.length - 1];
+                // "Accrued YTD" is the as-of-today accrual for the current PTO
+                // year (consistent with the balance card's "Accrued" and with
+                // "Used YTD"), so mirror calculateBalanceOnDate rather than the
+                // current month's end-of-month forecast row.
+                const balance = PTO.calculateBalanceOnDate(today, config, vacations);
                 return {
                     year,
                     rowCount: rows.length,
                     firstMonth: rows[0].month_name,
                     lastMonth: rows[rows.length - 1].month_name,
-                    ytd: ytd.accrued
+                    ytd: balance.accrued
                 };
             }"""
         )

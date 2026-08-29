@@ -885,7 +885,8 @@
         };
     }
 
-    function continuousDaysOffInterval(ptoDates, holidays, minDate, maxDate, requiresPto) {
+    function continuousDaysOffInterval(ptoDates, holidays, minDate, maxDate, requiresPto,
+                                       alreadyOff) {
         if (!ptoDates.size) return null;
         const sorted = [...ptoDates].sort();
         let start = parseCanonicalDate(sorted[0]);
@@ -894,17 +895,21 @@
         const upper = maxDate || dateOf(end.getUTCFullYear(), 12, 31);
         // When holidays require PTO, an uncovered holiday is a working day,
         // so the stretch stops there; only weekends and the candidate's own
-        // dates (which include any covered holidays) continue it.
+        // dates (which include any covered holidays) continue it. Days that are
+        // already booked are off too, so they extend the stretch (booking a day
+        // next to an existing vacation lengthens the run).
         const isOff = day => !isBusinessDay(day) || ptoDates.has(formatDate(day))
-            || (!requiresPto && holidays.has(formatDate(day)));
+            || (!requiresPto && holidays.has(formatDate(day)))
+            || (alreadyOff != null && alreadyOff.has(formatDate(day)));
         while (addDays(start, -1) >= lower && isOff(addDays(start, -1))) start = addDays(start, -1);
         while (addDays(end, 1) <= upper && isOff(addDays(end, 1))) end = addDays(end, 1);
         return [start, end];
     }
 
-    function continuousDaysOffCount(ptoDates, holidays, minDate, maxDate, requiresPto) {
+    function continuousDaysOffCount(ptoDates, holidays, minDate, maxDate, requiresPto,
+                                    alreadyOff) {
         const interval = continuousDaysOffInterval(
-            ptoDates, holidays, minDate, maxDate, requiresPto);
+            ptoDates, holidays, minDate, maxDate, requiresPto, alreadyOff);
         return interval ? daysBetween(interval[0], interval[1]) + 1 : 0;
     }
 
@@ -942,7 +947,7 @@
                 const selectedSet = new Set(selected.map(formatDate));
                 const total = continuousDaysOffCount(
                     selectedSet, holidays, windowStart, windowEnd,
-                    requiresPto);
+                    requiresPto, booked);
                 const score = total / needed;
                 if (score > result.score) {
                     result = {
@@ -1007,14 +1012,15 @@
         };
     }
 
-    function suggestionMetrics(start, end, holidays, requiresPto, windowStart, windowEnd) {
+    function suggestionMetrics(start, end, holidays, requiresPto, windowStart, windowEnd,
+                               alreadyOff) {
         const allDates = dateRange(start, end);
         const ptoDates = allDates.filter(day => isBusinessDay(day)
             && (requiresPto || !holidays.has(formatDate(day)))).map(formatDate);
         const interval = continuousDaysOffInterval(
             new Set(allDates.map(formatDate)), holidays,
             windowStart, windowEnd,
-            requiresPto);
+            requiresPto, alreadyOff);
         const expanded = interval ? dateRange(interval[0], interval[1]) : allDates;
         const ptoSet = new Set(ptoDates);
         return {
@@ -1119,7 +1125,7 @@
             seen.add(key);
             const metrics = suggestionMetrics(
                 start, end, holidays, normalized.pto_holidays_require_pto,
-                yearStart, yearEnd);
+                yearStart, yearEnd, reserved);
             if (!metrics.pto_days) return;
             candidates.push({
                 name,
@@ -1204,7 +1210,7 @@
                 if (altStart > altEnd || selectedKeys.has(key) || altStart < earliest) continue;
                 const metrics = suggestionMetrics(
                     altStart, altEnd, holidays, normalized.pto_holidays_require_pto,
-                    yearStart, yearEnd);
+                    yearStart, yearEnd, reserved);
                 if (!metrics.pto_days) continue;
                 alternatives.push({
                     name: 'Nearby alternative',

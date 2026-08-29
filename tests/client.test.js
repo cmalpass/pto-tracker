@@ -988,6 +988,32 @@ test('continuous days off stops at uncovered holidays when they require PTO', ()
     assert.equal(offWeek.total_days_off, 4);
 });
 
+test('best weeks count already-booked days as part of the run', () => {
+    // Mar 13-15 2026 are Fri-Sun with no US holidays nearby. A vacation booked
+    // Fri Mar 13 through Sun Mar 15 means the following Monday (Mar 16) is off
+    // for 4 consecutive days (Fri-Sun booked + Mon), not just the 3 the weekend
+    // alone would give. Without counting booked days the score understates the
+    // value of extending an existing trip.
+    const vacations = [{
+        id: 1, name: 'Existing', start_date: '2026-03-13', end_date: '2026-03-15',
+        days: 1, hours: 0, type: 'vacation'
+    }];
+
+    const heatWeek = PTO.generateHeatmap(2026, config, vacations)
+        .weeks.find(week => week.start_date === '2026-03-16');
+    assert.equal(heatWeek.total_days_off, 4, 'booked Fri-Sun must extend Monday run');
+    assert.equal(heatWeek.score, 4);
+    assert.ok(
+        heatWeek.best_pto_dates.includes('2026-03-16'),
+        'Monday should be an optimal single-day booking'
+    );
+
+    // With no booked vacation the same Monday only yields the weekend run.
+    const baselineWeek = PTO.generateHeatmap(2026, config, [])
+        .weeks.find(week => week.start_date === '2026-03-16');
+    assert.equal(baselineWeek.total_days_off, 3);
+});
+
 test('forfeiture alert dates the loss from the PTO year end, not a fixed Jan 1', () => {
     const notifications = require('../static/js/modules/notifications.js');
     const forfeitConfig = { ...config, pto_uses_rollover: false };
