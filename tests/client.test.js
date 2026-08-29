@@ -396,6 +396,37 @@ test('starts forecasts from an entered baseline and ignores prior history', () =
     assert.ok(august.balance < 10 + august.accrued);
 });
 
+test('reports year-only total_accrued in multi-year forecasts regardless of baseline mode', () => {
+    const baselineConfig = {
+        ...config,
+        forecast_baseline_enabled: true,
+        forecast_baseline_date: '2026-03-01',
+        forecast_baseline_balance: 10
+    };
+    const vacations = [
+        { type: 'vacation', start_date: '2026-02-25', end_date: '2026-02-27', days: 3, hours: 0 }
+    ];
+    const withBaseline = PTO.generateMultiYearForecast(2026, 2, baselineConfig, vacations);
+    const withoutBaseline = PTO.generateMultiYearForecast(2026, 2, config, vacations);
+
+    // "Accrued" is the accrual earned inside each PTO year only. The baseline
+    // opening balance and prior-year carryover live in carryover / balance
+    // columns instead, so they must not inflate the year's accrued figure.
+    const round2 = value => Math.round(value * 100) / 100;
+    const yearOne = PTO.calculateAccrualToDate('2026-12-31', config)
+        - PTO.calculateAccrualToDate('2025-12-31', config);
+    assert.equal(withoutBaseline[0].total_accrued, round2(yearOne));
+    // Year one's accrual must not include the baseline opening balance.
+    assert.equal(withBaseline[0].total_accrued, round2(yearOne));
+    // Year two's accrual must be the same in both modes and must not include
+    // the prior year's carryover.
+    assert.ok(withBaseline[1].total_accrued > 0);
+    assert.equal(withBaseline[1].total_accrued, withoutBaseline[1].total_accrued);
+    assert.equal(withBaseline[1].total_accrued, round2(
+        PTO.calculateAccrualToDate('2027-12-31', config)
+            - PTO.calculateAccrualToDate('2026-12-31', config)));
+});
+
 test('classifies usage using inclusive per-year PTO boundaries', () => {
     const boundaryConfig = {
         ...config,
