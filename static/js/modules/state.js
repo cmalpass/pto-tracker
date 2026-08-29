@@ -5,7 +5,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     pto_accrual_per_pay_period: 1,
     pto_accrual_type: 'days',
     pto_hours_per_day: 8,
-    pto_holidays_require_pto: true,
+    pto_holidays_require_pto: false,
     pay_periods_per_year: 26,
     accrual_start_date: `${currentUtcYear}-01-01`,
     accrual_method: 'pro-rata',

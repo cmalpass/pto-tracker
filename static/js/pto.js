@@ -156,7 +156,9 @@
             pto_accrual_per_pay_period: numberValue(source.pto_accrual_per_pay_period, 1),
             pto_accrual_type: source.pto_accrual_type === 'hours' ? 'hours' : 'days',
             pto_hours_per_day: numberValue(source.pto_hours_per_day, 8) || 8,
-            pto_holidays_require_pto: boolValue(source.pto_holidays_require_pto, true),
+            // Match DEFAULT_CONFIG.pto_holidays_require_pto (false) so a missing
+            // key behaves the same in the engine as in the settings UI.
+            pto_holidays_require_pto: boolValue(source.pto_holidays_require_pto, false),
             pay_periods_per_year: numberValue(source.pay_periods_per_year, 26),
             accrual_method: source.accrual_method || 'pro-rata',
             pto_carryover_limit: numberValue(source.pto_carryover_limit, 40),
