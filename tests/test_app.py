@@ -68,7 +68,7 @@ async def test_dashboard_and_forecast(browser):
     try:
         await open_app(page)
         assert await page.locator("h1:has-text('PTO Tracker')").is_visible()
-        assert await page.locator("#stat-accrued-ytd").is_visible()
+        assert await page.locator("#stat-upcoming").is_visible()
         await page.click("button:has-text('Forecast')")
         await page.wait_for_selector(".forecast-table tbody tr")
         assert await page.locator(".forecast-table tbody tr").count() == 12
@@ -176,7 +176,7 @@ async def test_forecast_spans_fiscal_pto_year(browser):
         assert len(rows) == 12
         assert (await rows[0].inner_text()).startswith("July")
         assert (await rows[11].inner_text()).startswith("June")
-        ytd_stat = await page.locator("#stat-accrued-ytd").inner_text()
+        ytd_stat = await page.locator("#accrued-balance").inner_text()
         assert ytd_stat == f"{expected['ytd']:.1f}"
     finally:
         await context.close()
@@ -269,6 +269,7 @@ async def test_settings_vesting_start_year_round_trips_and_validates(browser):
         await wait_for_storage_status(page, "ok")
         await page.click("#btn-settings")
         await page.wait_for_selector("#settings-modal.active")
+        await page.click("summary:has-text('Advanced settings')")
         assert await page.locator("#pto-start-year").input_value() == "2022"
         # Out-of-range values are rejected by form validation; the modal
         # stays open and the stored config is untouched.
