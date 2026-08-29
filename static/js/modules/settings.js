@@ -22,6 +22,10 @@ export function configWarnings(config) {
     if (!globalThis.PTO.isCanonicalDate(config.accrual_start_date)) {
         warnings.push({ severity: 'error', message: 'Accrual start date must use YYYY-MM-DD format.' });
     }
+    const ptoStartYear = Number(config.pto_start_year);
+    if (!Number.isInteger(ptoStartYear) || ptoStartYear < 1900 || ptoStartYear > 2100) {
+        warnings.push({ severity: 'error', message: 'Vesting start year must be a year between 1900 and 2100.' });
+    }
     if (config.forecast_baseline_enabled) {
         if (!globalThis.PTO.isCanonicalDate(config.forecast_baseline_date)) {
             warnings.push({ severity: 'error', message: 'Available balance date must use YYYY-MM-DD format.' });

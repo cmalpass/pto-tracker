@@ -805,6 +805,23 @@ select option {
     gap: 0.5rem;
 }
 
+.vacation-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.vacation-filters input[type="search"] {
+    flex: 1 1 12rem;
+    min-width: 10rem;
+}
+
+.vacation-filters select {
+    flex: 0 1 auto;
+    max-width: 10rem;
+}
+
 .vacation-edit,
 .vacation-delete {
     background: none;

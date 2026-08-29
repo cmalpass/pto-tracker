@@ -59,6 +59,30 @@ export const POLICY_PRESETS = Object.freeze({
     }
 });
 
+const DEFAULT_VACATION_FILTERS = Object.freeze({ query: '', type: '' });
+
+function loadVacationFilters() {
+    try {
+        const raw = globalThis.localStorage?.getItem('pto-vacation-filters');
+        if (!raw) return { ...DEFAULT_VACATION_FILTERS };
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new TypeError('Vacation filters must be an object');
+        }
+        return {
+            query: typeof parsed.query === 'string' ? parsed.query : '',
+            type: typeof parsed.type === 'string' ? parsed.type : ''
+        };
+    } catch (_) {
+        try {
+            globalThis.localStorage?.removeItem('pto-vacation-filters');
+        } catch (_) {
+            // A broken preference must never prevent application startup.
+        }
+        return { ...DEFAULT_VACATION_FILTERS };
+    }
+}
+
 const DEFAULT_SUGGESTION_FILTERS = Object.freeze({ categories: [], sortBy: 'impact' });
 
 function loadSuggestionFilters() {
@@ -102,6 +126,7 @@ export const state = {
     calendarEvents: {},
     currentYear: new Date().getFullYear(),
     currentMonth: new Date().getMonth(),
+    currentPtoYear: new Date().getFullYear(),
     today: null,
     forecastChart: null,
     multiYearChart: null,
@@ -112,6 +137,7 @@ export const state = {
     vacationCalcRequestId: 0,
     vacationSuggestions: null,
     suggestionFilters: loadSuggestionFilters(),
+    vacationFilters: loadVacationFilters(),
     suggestionAnalysisTimer: null,
     vacationAnalysisRequestId: 0,
     notificationAlerts: [],

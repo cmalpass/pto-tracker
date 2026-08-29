@@ -1,5 +1,5 @@
-import { DAYS, MONTHS, state } from './state.js?v=20260813-23';
-import { clearElement, element, appendText } from './dom.js?v=20260813-23';
+import { DAYS, MONTHS, state } from './state.js?v=20260829-1';
+import { clearElement, element, appendText } from './dom.js?v=20260829-1';
 
 let emptyVacationElement;
 let emptySuggestionElement;
@@ -224,7 +224,7 @@ export function renderCalendar(year, month, today, monthEvents) {
     }
 }
 
-export function renderVacationsList(vacations) {
+export function renderVacationsList(vacations, totalCount = vacations.length) {
     const container = document.getElementById('vacations-list');
     emptyVacationElement ||= document.getElementById('empty-vacations');
     const empty = emptyVacationElement;
@@ -232,6 +232,15 @@ export function renderVacationsList(vacations) {
     clearElement(container);
     container.append(empty);
     if (!vacations.length) {
+        const title = empty.querySelector('p');
+        const hint = empty.querySelector('.empty-hint');
+        if (totalCount > 0) {
+            if (title) title.textContent = 'No matching vacations';
+            if (hint) hint.textContent = 'Try adjusting your search or type filter';
+        } else {
+            if (title) title.textContent = 'No vacations planned yet';
+            if (hint) hint.textContent = 'Add your first vacation to see it here';
+        }
         empty.style.display = 'block';
         return;
     }

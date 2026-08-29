@@ -1,4 +1,4 @@
-import { state } from './state.js?v=20260813-23';
+import { state } from './state.js?v=20260829-1';
 
 export function suggestionOptions() {
     const filters = state.suggestionFilters || {};
@@ -16,7 +16,7 @@ export function suggestionOptions() {
 
 export function generateSuggestions() {
     return globalThis.PTO.generateVacationSuggestions(
-        state.currentYear,
+        state.currentPtoYear,
         state.config,
         state.vacations,
         suggestionOptions()

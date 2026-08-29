@@ -181,6 +181,23 @@ test('calculates holidays, business days, and accrual', () => {
     assert.ok(PTO.calculateAccrualToDate('2026-12-31', config) > 0);
 });
 
+test('omits observed days for US Sunday holidays but keeps Saturday shifts', () => {
+    // Christmas 2022 fell on a Sunday; US federal rule gives no observed day.
+    assert.equal(PTO.getHolidays(2022, config)['2022-12-25'], 'Christmas Day');
+    assert.equal(PTO.getHolidays(2022, config)['2022-12-26'], undefined);
+    // Jul 4 2021 was a Sunday; no Monday substitute.
+    assert.equal(PTO.getHolidays(2021, config)['2021-07-05'], undefined);
+    // Veterans Day 2029 is a Sunday; no Monday substitute.
+    assert.equal(PTO.getHolidays(2029, config)['2029-11-12'], undefined);
+    // Jan 1 2034 is a Sunday, so 2033 must not end with an observed day.
+    assert.equal(PTO.getHolidays(2033, config)['2033-12-31'], undefined);
+    // Saturday rule unchanged: observed on the preceding Friday.
+    assert.equal(PTO.getHolidays(2026, config)['2026-07-03'], 'Independence Day (observed)');
+    assert.equal(PTO.getHolidays(2023, config)['2023-11-10'], 'Veterans Day (observed)');
+    // Saturday New Year's Day still observes the prior December 31.
+    assert.equal(PTO.getHolidays(2021, config)['2021-12-31'], "New Year's Day (observed)");
+});
+
 test('applies immediate, graded, and cliff vesting schedules', () => {
     assert.equal(PTO.vestingMultiplier('2026-12-31', config), 1);
     assert.ok(PTO.vestingMultiplier('2026-12-31', {

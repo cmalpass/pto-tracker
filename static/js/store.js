@@ -360,6 +360,29 @@
         fallbackStorage().setItem(FALLBACK_KEY, JSON.stringify(data));
     }
 
+    // Re-sync the localStorage fallback from the database so a later degraded
+    // window (or reload) starts from current data: the fallback's records
+    // match the DB and each nextId is ahead of every stored id.
+    async function syncFallbackFromDatabase(db) {
+        try {
+            const previous = readFallback();
+            const merged = {
+                config: await idbRequest(db, 'config', 'readonly', store => store.getAll()),
+                vacations: await idbRequest(db, 'vacations', 'readonly', store => store.getAll()),
+                notes: await idbRequest(db, 'notes', 'readonly', store => store.getAll()),
+                history: await idbRequest(db, 'history', 'readonly', store => store.getAll()),
+                nextId: {}
+            };
+            for (const storeName of ['vacations', 'notes', 'history']) {
+                const maxId = merged[storeName].reduce((max, record) => Math.max(max, Number(record.id) || 0), 0);
+                merged.nextId[storeName] = Math.max(maxId + 1, previous.nextId[storeName] || 1);
+            }
+            writeFallback(merged);
+        } catch (error) {
+            console.warn('PTO Tracker: could not re-sync browser fallback storage', error);
+        }
+    }
+
     // Merge fallback (localStorage) records into IndexedDB on a successful
     // connection, then re-sync the fallback from the merged database so the
     // next degraded window starts from merged state. On the same id the DB
@@ -387,19 +410,7 @@
                     await idbRequest(db, 'config', 'readwrite', store => store.put(data.config[0]));
                 }
             }
-            // Re-sync the fallback from the merged database.
-            const merged = {
-                config: await idbRequest(db, 'config', 'readonly', store => store.getAll()),
-                vacations: await idbRequest(db, 'vacations', 'readonly', store => store.getAll()),
-                notes: await idbRequest(db, 'notes', 'readonly', store => store.getAll()),
-                history: await idbRequest(db, 'history', 'readonly', store => store.getAll()),
-                nextId: {}
-            };
-            for (const storeName of idStores) {
-                const maxId = merged[storeName].reduce((max, record) => Math.max(max, Number(record.id) || 0), 0);
-                merged.nextId[storeName] = Math.max(maxId + 1, data.nextId[storeName] || 1);
-            }
-            writeFallback(merged);
+            await syncFallbackFromDatabase(db);
         } catch (error) {
             console.warn('PTO Tracker: could not reconcile browser fallback storage', error);
         }
@@ -625,6 +636,11 @@
                         transaction.objectStore('vacations').put(record));
                     incoming.notes.forEach(record => transaction.objectStore('notes').put(record));
                 });
+                // The direct transaction bypassed put(), so re-sync the
+                // localStorage fallback (records and nextId) from the DB.
+                // Otherwise a later degraded window would keep stale records
+                // and could hand out ids that collide with the import.
+                await syncFallbackFromDatabase(db);
             } else {
                 const previous = readFallback();
                 try {
