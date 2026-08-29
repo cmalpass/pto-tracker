@@ -65,6 +65,32 @@ test('validates leave types and quarter-hour partial-day amounts against policy 
     }])[1].amount, 0.5);
 });
 
+test('counts explicit PTO booked on a non-business day', () => {
+    const holidayBooking = {
+        type: 'holiday',
+        start_date: '2026-12-25',
+        end_date: '2026-12-25',
+        days: 1,
+        hours: 0
+    };
+    const weekendBooking = {
+        type: 'vacation',
+        start_date: '2026-08-08',
+        end_date: '2026-08-08',
+        days: 0,
+        hours: 4
+    };
+
+    assert.equal(
+        PTO.calculateBalanceOnDate('2026-12-31', config, [holidayBooking]).used,
+        1
+    );
+    assert.equal(
+        PTO.calculateBalanceOnDate('2026-08-31', config, [weekendBooking]).used,
+        0.5
+    );
+});
+
 test('generates escaped CRLF ICS with stable date-only UIDs and round-trips dates', () => {
     const vacation = {
         id: 7,

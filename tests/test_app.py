@@ -76,6 +76,20 @@ async def test_dashboard_and_forecast(browser):
         await context.close()
 
 
+async def test_heatmap_shows_varied_suitability_colors(browser):
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await page.click("#tab-heatmap-tab")
+        await page.wait_for_selector(".heatmap-cell")
+        colors = await page.locator(".heatmap-cell").evaluate_all(
+            "cells => [...new Set(cells.map(cell => cell.style.getPropertyValue('--heatmap-color')))]"
+        )
+        assert len(colors) > 1, "heatmap should distinguish weeks by suitability"
+    finally:
+        await context.close()
+
+
 async def test_year_selectors_track_the_current_pto_year(browser):
     """Year selectors are populated dynamically so the current PTO year
     stays an option even after the hardcoded HTML options go stale."""
@@ -1132,6 +1146,7 @@ async def main():
         browser = await playwright.chromium.launch()
         tests = [
             test_dashboard_and_forecast,
+            test_heatmap_shows_varied_suitability_colors,
             test_year_selectors_track_the_current_pto_year,
             test_forecast_spans_fiscal_pto_year,
             test_calendar_tracks_calendar_year_with_fiscal_pto_year,
