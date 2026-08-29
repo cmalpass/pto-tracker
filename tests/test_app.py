@@ -60,7 +60,7 @@ async def open_app(page):
     await clear_browser_data(page)
     await page.reload()
     await page.wait_for_selector("#current-balance")
-    await page.wait_for_function("() => Boolean(window.PTOStore && window.PTO)")
+    await wait_for_page_function(page, "() => Boolean(window.PTOStore && window.PTO)")
 
 
 async def test_dashboard_and_forecast(browser):
@@ -165,6 +165,47 @@ async def test_forecast_spans_fiscal_pto_year(browser):
         await context.close()
 
 
+async def test_calendar_tracks_calendar_year_with_fiscal_pto_year(browser):
+    """The calendar shows the real calendar month, not the fiscal PTO year,
+    while the forecast year select keeps tracking the PTO year."""
+    context, page = await new_page(browser)
+    try:
+        await page.clock.install()
+        await page.clock.set_fixed_time(datetime(2027, 11, 15, 12, 0, 0))
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        await page.evaluate(
+            """async () => {
+                const base = await PTOStore.getConfig();
+                await PTOStore.putConfig({
+                    ...base,
+                    pto_year_boundaries: [
+                        { year: 2027, final_date: '2027-06-30' },
+                        { year: 2028, final_date: '2028-06-30' }
+                    ]
+                });
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        # 2027-11-15 is inside PTO year 2028, but the calendar must show
+        # the actual calendar month: November 2027.
+        await page.click("#tab-calendar-tab")
+        await page.wait_for_selector("#calendar-title")
+        title = await page.locator("#calendar-title").inner_text()
+        assert title == "November 2027", title
+        # The forecast select keeps tracking the PTO year (2028).
+        await page.click("#tab-forecast-tab")
+        await page.wait_for_selector(".forecast-table tbody tr")
+        selected = await page.locator("#forecast-year").evaluate(
+            "select => select.selectedIndex >= 0"
+            " ? select.options[select.selectedIndex].value : null"
+        )
+        assert selected == "2028"
+    finally:
+        await context.close()
+
+
 async def test_settings_dialog_preserves_zero_carryover_limit(browser):
     """A stored carryover limit of 0 (valid 'no carryover' setting) must
     display as 0 in the settings dialog and remain 0 after save, not fall
@@ -190,6 +231,58 @@ async def test_settings_dialog_preserves_zero_carryover_limit(browser):
             "() => PTOStore.getConfig().then(config => config.pto_carryover_limit)"
         )
         assert float(stored) == 0
+    finally:
+        await context.close()
+
+
+async def test_settings_vesting_start_year_round_trips_and_validates(browser):
+    """The vesting start year is editable in settings, round-trips through
+    save, and out-of-range values are rejected without touching the config."""
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        await page.evaluate(
+            """async () => {
+                const base = await PTOStore.getConfig();
+                await PTOStore.putConfig({...base, pto_start_year: 2022});
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        await page.click("#btn-settings")
+        await page.wait_for_selector("#settings-modal.active")
+        assert await page.locator("#pto-start-year").input_value() == "2022"
+        # Out-of-range values are rejected by form validation; the modal
+        # stays open and the stored config is untouched.
+        await page.fill("#pto-start-year", "1800")
+        await page.click("button:has-text('Save Settings')")
+        await page.wait_for_timeout(300)
+        assert await page.locator("#settings-modal.active").is_visible()
+        stored = await page.evaluate(
+            "() => PTOStore.getConfig().then(config => Number(config.pto_start_year))"
+        )
+        assert stored == 2022
+        # An empty value bypasses HTML range validation but is rejected by
+        # the app-level config validation.
+        await page.fill("#pto-start-year", "")
+        await page.click("button:has-text('Save Settings')")
+        await wait_for_page_function(
+            page,
+            "() => (document.querySelector('#toast')?.textContent || '').includes('Vesting start year')",
+        )
+        stored = await page.evaluate(
+            "() => PTOStore.getConfig().then(config => Number(config.pto_start_year))"
+        )
+        assert stored == 2022
+        # A valid value round-trips through save.
+        await page.fill("#pto-start-year", "2023")
+        await page.click("button:has-text('Save Settings')")
+        await page.wait_for_selector("#settings-modal.active", state="hidden")
+        stored = await page.evaluate(
+            "() => PTOStore.getConfig().then(config => Number(config.pto_start_year))"
+        )
+        assert stored == 2023
     finally:
         await context.close()
 
@@ -419,6 +512,58 @@ async def test_vacation_persists_and_deletes(browser):
         await context.close()
 
 
+async def test_vacation_search_and_type_filter_persist(browser):
+    """The vacations tab filters by name/date text and leave type, and the
+    filters persist across reloads via localStorage."""
+    # No init script here: a fresh context is already clean, and the reload
+    # below must keep the saved filter (new_page's init script would wipe it).
+    context = await browser.new_context()
+    page = await context.new_page()
+    try:
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        await page.evaluate(
+            """async () => {
+                const put = PTOStore.putVacation;
+                await put({ name: 'Beach trip', type: 'vacation', start_date: '2026-06-01', end_date: '2026-06-05', days: 5, hours: 0 });
+                await put({ name: 'Doctor visit', type: 'sick', start_date: '2026-06-10', end_date: '2026-06-10', days: 1, hours: 0 });
+                await put({ name: 'Family time', type: 'personal', start_date: '2026-07-01', end_date: '2026-07-02', days: 2, hours: 0 });
+            }"""
+        )
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        await page.click("#tab-vacations-tab")
+        await page.wait_for_selector(".vacation-item")
+        assert await page.locator(".vacation-item").count() == 3
+        # Text search narrows the list by name.
+        await page.fill("#vacation-search", "beach")
+        assert await page.locator(".vacation-item").count() == 1
+        assert "Beach trip" in await page.locator(".vacation-item").inner_text()
+        # The type filter narrows by leave type.
+        await page.fill("#vacation-search", "")
+        assert await page.locator(".vacation-item").count() == 3
+        await page.select_option("#vacation-type-filter", "sick")
+        assert await page.locator(".vacation-item").count() == 1
+        assert "Doctor visit" in await page.locator(".vacation-item").inner_text()
+        # A date search with no match shows the filtered empty state.
+        await page.fill("#vacation-search", "2026-07")
+        assert await page.locator(".vacation-item").count() == 0
+        assert "No matching vacations" in await page.locator("#empty-vacations").inner_text()
+        # Filters persist across a reload (the app reopens on the dashboard).
+        await page.reload()
+        await wait_for_storage_status(page, "ok")
+        assert await page.locator("#vacation-search").input_value() == "2026-07"
+        assert await page.locator("#vacation-type-filter").input_value() == "sick"
+        await page.click("#tab-vacations-tab")
+        assert await page.locator(".vacation-item").count() == 0
+        # Clearing the filters restores the full list.
+        await page.fill("#vacation-search", "")
+        await page.select_option("#vacation-type-filter", "")
+        assert await page.locator(".vacation-item").count() == 3
+    finally:
+        await context.close()
+
+
 async def test_leave_types_and_partial_day_validation(browser):
     context, page = await new_page(browser)
     try:
@@ -484,6 +629,54 @@ async def test_legacy_browser_backup_migrates_leave_type(browser):
         )
         assert migrated["type"] == "vacation"
         assert await page.evaluate("() => PTOStore.DB_VERSION == 3")
+    finally:
+        await context.close()
+
+
+async def test_json_import_resyncs_fallback_storage(browser):
+    """A replace import in IndexedDB mode writes via a direct transaction,
+    bypassing put(); the localStorage fallback must be re-synced from the DB
+    so a later degraded window starts from the imported data with a nextId
+    ahead of every imported id, not a stale copy."""
+    context, page = await new_page(browser)
+    try:
+        await open_app(page)
+        await wait_for_storage_status(page, "ok")
+        # Seed a record so the fallback and DB can diverge, then replace-import
+        # a record with an id far ahead of the seed.
+        await page.evaluate(
+            """async () => {
+                await PTOStore.putVacation({
+                    name: 'Seed', start_date: '2026-03-01', end_date: '2026-03-02',
+                    days: 2, hours: 0, auto_days: false
+                });
+                await PTOStore.importJSON({
+                    schemaVersion: PTOStore.DB_VERSION,
+                    data: {
+                        config: null,
+                        vacations: [{
+                            id: 50,
+                            name: 'Imported',
+                            start_date: '2026-04-01',
+                            end_date: '2026-04-02',
+                            days: 2,
+                            hours: 0,
+                            auto_days: false
+                        }],
+                        notes: []
+                    }
+                });
+            }"""
+        )
+        fallback = await page.evaluate(
+            "() => JSON.parse(localStorage.getItem('pto-tracker:data:v3') || 'null')"
+        )
+        assert fallback is not None
+        assert [v["name"] for v in fallback["vacations"]] == ["Imported"]
+        assert fallback["nextId"]["vacations"] >= 51
+        # The database matches the import.
+        vacations = await page.evaluate("() => PTOStore.listVacations()")
+        assert [v["name"] for v in vacations] == ["Imported"]
     finally:
         await context.close()
 
@@ -596,7 +789,7 @@ async def test_accessibility_semantics_and_keyboard_controls(browser):
         await page.locator("#cal-prev-month").focus()
         await page.click("#btn-settings")
         settings = page.locator("#settings-modal")
-        await page.wait_for_function("() => document.activeElement?.id === 'policy-preset'")
+        await wait_for_page_function(page, "() => document.activeElement?.id === 'policy-preset'")
         assert await settings.get_attribute("role") == "dialog"
         assert await settings.get_attribute("aria-modal") == "true"
         assert await page.locator("#policy-preset").evaluate("(node) => node === document.activeElement")
@@ -815,6 +1008,22 @@ async def test_import_rejects_invalid_pto_year_boundaries(browser):
         await context.close()
 
 
+async def wait_for_page_function(page, expression, timeout=15.0):
+    """CSP-safe alternative to a string-based page.wait_for_function.
+
+    String-based wait_for_function evaluates through eval() inside the
+    injected script, which the app's CSP (script-src without 'unsafe-eval')
+    intermittently blocks. page.evaluate sends the expression directly and
+    is CSP-safe, so poll it until the expression is truthy.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if await page.evaluate(expression):
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"page function never became truthy: {expression}")
+
+
 async def wait_for_storage_status(page, target, timeout=15.0):
     """Poll PTOStore's storage status via page.evaluate.
 
@@ -920,15 +1129,19 @@ async def main():
             test_dashboard_and_forecast,
             test_year_selectors_track_the_current_pto_year,
             test_forecast_spans_fiscal_pto_year,
+            test_calendar_tracks_calendar_year_with_fiscal_pto_year,
             test_settings_dialog_preserves_zero_carryover_limit,
+            test_settings_vesting_start_year_round_trips_and_validates,
             test_next_accrual_date_is_anchored_to_accrual_start,
             test_smart_notifications_generate_and_link_to_actions,
             test_smart_notification_dismissal_persists_and_changed_fingerprint_reappears,
             test_smart_notifications_cover_forfeiture_and_low_balance,
             test_smart_notifications_empty_state,
             test_vacation_persists_and_deletes,
+            test_vacation_search_and_type_filter_persist,
             test_leave_types_and_partial_day_validation,
             test_legacy_browser_backup_migrates_leave_type,
+            test_json_import_resyncs_fallback_storage,
             test_notes_and_json_backup,
             test_vacation_calendar_export_and_import_preview,
             test_import_rejects_invalid_pto_year_boundaries,

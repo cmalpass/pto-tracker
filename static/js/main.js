@@ -5,7 +5,7 @@ import {
     state,
     MONTHS,
     getRuntimeConfig
-} from './modules/state.js?v=20260813-23';
+} from './modules/state.js?v=20260829-1';
 import {
     announce,
     closeDialog,
@@ -14,7 +14,7 @@ import {
     setupDialog,
     showToast,
     showWarningToast
-} from './modules/dom.js?v=20260813-23';
+} from './modules/dom.js?v=20260829-1';
 import {
     renderSuggestionFilters as renderSuggestionFiltersDom,
     renderMiniCalendar as renderMiniCalendarDom,
@@ -30,25 +30,25 @@ import {
     renderHeatmap as renderHeatmapDom,
     renderForecastTable as renderForecastTableDom,
     renderExcelTable
-} from './modules/rendering.js?v=20260813-23';
+} from './modules/rendering.js?v=20260829-1';
 import {
     dismissNotification,
     generateNotifications,
     pruneDismissedFingerprints,
     visibleNotifications
-} from './modules/notifications.js?v=20260813-23';
+} from './modules/notifications.js?v=20260829-1';
 import {
     calendarData,
     expandCalendarEvents
-} from './modules/calendar.js?v=20260813-23';
-import { generateSuggestions } from './modules/suggestions.js?v=20260813-23';
-import { configWarnings } from './modules/settings.js?v=20260813-23';
-import { normalizeQuarterHours } from './modules/vacations.js?v=20260813-23';
+} from './modules/calendar.js?v=20260829-1';
+import { generateSuggestions } from './modules/suggestions.js?v=20260829-1';
+import { configWarnings } from './modules/settings.js?v=20260829-1';
+import { normalizeQuarterHours } from './modules/vacations.js?v=20260829-1';
 import {
     yearlyForecast as yearlyForecastFor,
     multiYearForecast as multiYearForecastFor,
     heatmap as heatmapFor
-} from './modules/forecast.js?v=20260813-23';
+} from './modules/forecast.js?v=20260829-1';
 
 function renderSuggestionFilters(availableCategories) {
     renderSuggestionFiltersDom(availableCategories, state.suggestionFilters || {});
@@ -247,12 +247,15 @@ async function loadDashboard() {
         state.config = config;
         state.vacations = vacations;
         state.today = config.current_date;
-        state.currentYear = config.current_year;
-        state.currentMonth = parseIsoDateToLocal(state.today).getMonth();
+        // Calendar navigation tracks the real calendar year; PTO-year views
+        // (forecast, heatmap, suggestions) use the fiscal PTO year instead.
+        const now = parseIsoDateToLocal(state.today);
+        state.currentYear = now.getFullYear();
+        state.currentMonth = now.getMonth();
+        state.currentPtoYear = config.current_year;
         updateUnitLabels(config);
         refreshNotifications();
         await loadForecast();
-        const now = parseIsoDateToLocal(state.today);
         const balance = PTO.calculateBalanceOnDate(config.current_date, config, vacations);
         const yearlyForecast = yearlyForecastFor(config.current_year, config, vacations);
         const typeBreakdown = PTO.getVacationTypeBreakdown(config.current_year, config, vacations);
@@ -500,7 +503,15 @@ async function renderCalendar() {
 async function loadVacations() {
     announce('Loading planned vacations.');
     try {
-        const vacations = await PTOStore.listVacations();
+        // Load the config alongside the list so activating the tab before the
+        // dashboard finishes loading (state.config is still {}) can't crash
+        // suggestion generation on a missing accrual_start_date.
+        const [vacations, config] = await Promise.all([
+            PTOStore.listVacations(),
+            getRuntimeConfig()
+        ]);
+        state.config = config;
+        state.currentPtoYear = config.current_year;
         state.vacations = vacations;
         state.vacationSuggestions = generateSuggestions();
         renderSuggestionFilters(state.vacationSuggestions.available_categories || []);
@@ -518,8 +529,55 @@ async function refreshViews() {
     await renderCalendar();
 }
 
+function applyVacationFilters(vacations) {
+    const filters = state.vacationFilters || {};
+    let visible = vacations;
+    const type = filters.type || '';
+    if (type) {
+        visible = visible.filter(vacation => globalThis.PTO.normalizeLeaveType(vacation.type) === type);
+    }
+    const query = (filters.query || '').trim().toLowerCase();
+    if (query) {
+        visible = visible.filter(vacation =>
+            (vacation.name || '').toLowerCase().includes(query)
+            || (vacation.start_date || '').includes(query)
+            || (vacation.end_date || '').includes(query));
+    }
+    return visible;
+}
+
 function renderVacationsList() {
-   renderVacationsListDom(state.vacations);
+   const all = state.vacations || [];
+   const visible = applyVacationFilters(all);
+   renderVacationsListDom(visible, all.length);
+}
+
+function setupVacationFilters() {
+    const search = document.getElementById('vacation-search');
+    const typeFilter = document.getElementById('vacation-type-filter');
+    if (!search || !typeFilter) return;
+    Object.values(globalThis.PTO.LEAVE_TYPES).forEach(typeInfo => {
+        typeFilter.add(new Option(typeInfo.label, typeInfo.key));
+    });
+    const filters = state.vacationFilters || { query: '', type: '' };
+    search.value = filters.query || '';
+    typeFilter.value = filters.type || '';
+    document.getElementById('vacation-filter-controls').addEventListener('input', () => {
+        state.vacationFilters = {
+            query: search.value,
+            type: typeFilter.value
+        };
+        localStorage.setItem('pto-vacation-filters', JSON.stringify(state.vacationFilters));
+        renderVacationsList();
+    });
+    document.getElementById('vacation-filter-controls').addEventListener('change', () => {
+        state.vacationFilters = {
+            query: search.value,
+            type: typeFilter.value
+        };
+        localStorage.setItem('pto-vacation-filters', JSON.stringify(state.vacationFilters));
+        renderVacationsList();
+    });
 }
 
 function renderVacationSuggestions() {
@@ -649,6 +707,7 @@ function editVacation(id) {
 }
 
 function setupVacationList() {
+    setupVacationFilters();
     document.getElementById('vacations-list').addEventListener('click', (event) => {
         const button = event.target.closest('button[data-vacation-id]');
         if (!button) return;
@@ -1248,6 +1307,9 @@ async function openSettings() {
         document.getElementById('forecast-baseline-balance').value = config.forecast_baseline_balance || 0;
         document.getElementById('timezone').value = config.timezone || 'UTC';
         document.getElementById('vesting').value = config.pto_vesting_schedule || 'immediate';
+        const ptoStartYear = Number(config.pto_start_year);
+        document.getElementById('pto-start-year').value =
+            Number.isInteger(ptoStartYear) && ptoStartYear > 0 ? ptoStartYear : new Date().getUTCFullYear();
         document.getElementById('rollover').checked = config.pto_uses_rollover !== false;
         document.getElementById('lose-limit').checked = config.pto_lose_above_limit !== false;
         document.getElementById('holidays-require-pto').checked = config.pto_holidays_require_pto !== false;
@@ -1332,25 +1394,25 @@ async function applyPolicy() {
 }
 
 async function loadForecast() {
-    announce(`Loading ${state.currentYear} forecast.`);
+    announce(`Loading ${state.currentPtoYear} forecast.`);
     const yearSelect = document.getElementById('forecast-year');
     // The select's HTML options are static, so rebuild them around the year
     // about to be rendered and mirror that year into the select.
-    globalThis.PTOYearSelects.populateYearSelect(yearSelect, state.currentYear);
+    globalThis.PTOYearSelects.populateYearSelect(yearSelect, state.currentPtoYear);
     if (yearSelect) {
-        yearSelect.value = String(state.currentYear);
+        yearSelect.value = String(state.currentPtoYear);
     }
     if (yearSelect && !yearSelect.dataset.listenerAttached) {
         yearSelect.dataset.listenerAttached = 'true';
         yearSelect.addEventListener('change', async (e) => {
-            state.currentYear = parseInt(e.target.value);
+            state.currentPtoYear = parseInt(e.target.value);
             await loadForecast();
         });
     }
     const requestId = ++state.forecastRequestId;
     try {
         const data = {
-            forecast: yearlyForecastFor(state.currentYear, state.config, state.vacations)
+            forecast: yearlyForecastFor(state.currentPtoYear, state.config, state.vacations)
         };
         if (requestId !== state.forecastRequestId) return;
         state.forecast = data.forecast || [];
@@ -1372,7 +1434,7 @@ async function loadMultiYearForecast() {
     const startSelect = document.getElementById('multi-year-start');
     const countSelect = document.getElementById('multi-year-count');
     if (!startSelect || !countSelect) return;
-    globalThis.PTOYearSelects.populateYearSelect(startSelect, state.config?.current_year ?? state.currentYear);
+    globalThis.PTOYearSelects.populateYearSelect(startSelect, state.config?.current_year ?? state.currentPtoYear);
     if (!startSelect.dataset.listenerAttached) {
         startSelect.dataset.listenerAttached = 'true';
         startSelect.addEventListener('change', loadMultiYearForecast);
@@ -1436,7 +1498,7 @@ function renderMultiYearChart(years) {
 async function loadHeatmap() {
     const select = document.getElementById('heatmap-year');
     if (!select) return;
-    globalThis.PTOYearSelects.populateYearSelect(select, state.config?.current_year ?? state.currentYear);
+    globalThis.PTOYearSelects.populateYearSelect(select, state.config?.current_year ?? state.currentPtoYear);
     if (!select.dataset.listenerAttached) {
         select.dataset.listenerAttached = 'true';
         select.addEventListener('change', loadHeatmap);

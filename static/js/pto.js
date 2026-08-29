@@ -336,6 +336,7 @@
         map[key] = map[key] ? `${map[key]}; ${name}` : name;
         if (!observedRule || (day.getUTCDay() !== 0 && day.getUTCDay() !== 6)) return;
         let observed = observedRule(day);
+        if (!observed) return;
         while (map[formatDate(observed)]) observed = addDays(observed, 1);
         if (observed.getUTCFullYear() !== day.getUTCFullYear()) return;
         const observedKey = formatDate(observed);
@@ -345,7 +346,9 @@
     }
 
     function usObserved(day) {
-        return addDays(day, day.getUTCDay() === 6 ? -1 : 1);
+        // US federal rule: a Saturday holiday shifts to the preceding Friday,
+        // but a Sunday holiday has no observed day.
+        return day.getUTCDay() === 6 ? addDays(day, -1) : null;
     }
 
     function caObserved(day) {
