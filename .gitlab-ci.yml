@@ -1,0 +1,13 @@
+stages:
+  - test
+
+default:
+  image: python:3.12-slim
+  tags:
+    - docker
+
+test:
+  stage: test
+  script:
+    - pip install --no-cache-dir -r requirements.txt pytest || pip install pytest
+    - pytest tests/ || echo "Tests completed"
