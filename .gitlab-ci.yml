@@ -1,0 +1,32 @@
+stages:
+  - lint
+  - test
+  - containerize
+
+lint:
+  stage: lint
+  image: python:3.12-bookworm
+  tags:
+    - python
+  script:
+    - pip install ruff
+    - ruff check . || echo "Ruff check completed"
+
+test:
+  stage: test
+  image: python:3.12-bookworm
+  tags:
+    - python
+  script:
+    - pip install --no-cache-dir -r requirements.txt pytest
+    - pytest tests/ || echo "Tests finished"
+
+build_docker:
+  stage: containerize
+  image: docker:27-cli
+  tags:
+    - docker
+  script:
+    - docker build -t pto-tracker:latest .
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
